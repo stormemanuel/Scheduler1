@@ -32,8 +32,11 @@ export default function LoginForm() {
       return;
     }
 
-    router.push(next);
-    router.refresh();
+    import type { Route } from "next";
+    const safeNext: Route = next && next.startsWith("/") ? (next as Route) : "/";
+
+router.push(safeNext);
+router.refresh();
   }
 
   return (
