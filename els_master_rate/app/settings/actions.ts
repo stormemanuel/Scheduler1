@@ -41,15 +41,16 @@ export async function bulkSaveMasterRatesAction(formData: FormData) {
 
   const upserts = Array.isArray(payload.upserts)
     ? payload.upserts
-        .map((row) => ({
-          id: row.id ? String(row.id).trim() : undefined,
-          city_name: String(row.city_name || "").trim(),
-          role_name: String(row.role_name || "").trim(),
-          full_day: normalizeNumber(row.full_day, 0),
-          half_day: row.half_day == null || row.half_day === "" ? null : normalizeNumber(row.half_day, 0),
-          overtime_multiplier: normalizeNumber(row.overtime_multiplier, 1.5) || 1.5,
-          doubletime_multiplier: normalizeNumber(row.doubletime_multiplier, 2.0) || 2.0,
-        }))
+       .map((row) => ({
+  role_name: String(row.role_name || "").trim(),
+  full_day: normalizeNumber(row.full_day, 0),
+  half_day:
+    row.half_day == null || String(row.half_day).trim() === ""
+      ? null
+      : normalizeNumber(row.half_day, 0),
+  overtime_multiplier: normalizeNumber(row.overtime_multiplier, 1.5) || 1.5,
+  doubletime_multiplier: normalizeNumber(row.doubletime_multiplier, 2.0) || 2.0,
+}))
         .filter((row) => row.city_name && row.role_name && row.full_day > 0)
     : [];
 
