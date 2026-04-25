@@ -9,12 +9,22 @@ type BulkRatePayload = {
     id?: string;
     city_name: string;
     role_name: string;
-    full_day: number;
-    half_day: number | null;
-    overtime_multiplier: number;
-    doubletime_multiplier: number;
+    full_day: number | string;
+    half_day: number | string | null;
+    overtime_multiplier: number | string;
+    doubletime_multiplier: number | string;
   }>;
   deletes: string[];
+};
+
+type NormalizedRateRow = {
+  id?: string;
+  city_name: string;
+  role_name: string;
+  full_day: number;
+  half_day: number | null;
+  overtime_multiplier: number;
+  doubletime_multiplier: number;
 };
 
 function normalizeNumber(value: unknown, fallback: number) {
@@ -26,7 +36,9 @@ export async function bulkSaveMasterRatesAction(formData: FormData) {
   await requireRole(["owner", "admin"]);
 
   const admin = createSupabaseAdminClient();
-  if (!admin) return { ok: false, message: "SUPABASE_SERVICE_ROLE_KEY is missing." };
+  if (!admin) {
+    return { ok: false, message: "SUPABASE_SERVICE_ROLE_KEY is missing." };
+  }
 
   let payload: BulkRatePayload;
   try {
@@ -39,18 +51,23 @@ export async function bulkSaveMasterRatesAction(formData: FormData) {
     ? payload.deletes.map((value) => String(value || "").trim()).filter(Boolean)
     : [];
 
-  const upserts = Array.isArray(payload.upserts)
+  const upserts: NormalizedRateRow[] = Array.isArray(payload.upserts)
     ? payload.upserts
-        .map((row) => ({
+        .map((row): NormalizedRateRow => ({
           id: row.id ? String(row.id).trim() : undefined,
           city_name: String(row.city_name || "").trim(),
           role_name: String(row.role_name || "").trim(),
           full_day: normalizeNumber(row.full_day, 0),
-          half_day: row.half_day == null || row.half_day === "" ? null : normalizeNumber(row.half_day, 0),
+          half_day:
+            row.half_day == null || String(row.half_day).trim() === ""
+              ? null
+              : normalizeNumber(row.half_day, 0),
           overtime_multiplier: normalizeNumber(row.overtime_multiplier, 1.5) || 1.5,
           doubletime_multiplier: normalizeNumber(row.doubletime_multiplier, 2.0) || 2.0,
         }))
-        .filter((row) => row.city_name && row.role_name && row.full_day > 0)
+        .filter(
+          (row) => Boolean(row.city_name) && Boolean(row.role_name) && row.full_day > 0
+        )
     : [];
 
   if (!deletes.length && !upserts.length) {
@@ -63,12 +80,16 @@ export async function bulkSaveMasterRatesAction(formData: FormData) {
   }
 
   if (upserts.length) {
-    const { error } = await admin.from("master_rates").upsert(upserts, { onConflict: "city_name,role_name" });
+    const { error } = await admin
+      .from("master_rates")
+      .upsert(upserts, { onConflict: "city_name,role_name" });
+
     if (error) return { ok: false, message: error.message };
   }
 
   revalidatePath("/");
   revalidatePath("/settings");
   revalidatePath("/events");
+
   return { ok: true, message: "Master rates saved." };
 }
