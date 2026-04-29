@@ -14,7 +14,7 @@ This is a root-ready Next.js + Supabase build for the ELS operations app. Upload
   - fuzzy fallback with candidate names shown in preview
 - Confirmed matched crew are inserted into `assignments` with real `crew_id` values.
 - Duplicate assignment rows in the same sub-call are deduped before insert/upsert.
-- Existing Supabase crew contacts, city pools, master rates, and show data are preserved.
+- Existing Supabase crew contacts, city pools, master rates, and show data are preserved. 
 
 ## Deploy
 
