@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/27219755/README.md)
+[README.md](https://github.com/user-attachments/files/27220042/README.md)
 # ELS Cloud App – Events Crew Import Fix
 
 This is a root-ready Next.js + Supabase build for the ELS operations app. Upload the contents of this folder to the top level of the GitHub repo so `package.json` stays at the repo root.
