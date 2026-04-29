@@ -27,4 +27,4 @@ This build keeps the existing Supabase contacts and adds a cleaner Master Rates 
 - Make Events pull crew pay estimates from the selected rate city so each show shows total estimated payout.
 
 
-Updated build: blank-instead-of-zero rate inputs and a Supabase-backed Events workspace with shows, labor days, sub-calls, and estimated payout by rate city.
+Updated build: blank-instead-of-zero rate inputs and a Supabase-backed Events workspace with shows, labor days, sub-calls, and estimated payout by rate city.  
