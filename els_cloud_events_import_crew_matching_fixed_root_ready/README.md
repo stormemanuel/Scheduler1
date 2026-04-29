@@ -31,4 +31,4 @@ This is a root-ready Next.js + Supabase build for the ELS operations app. Upload
 
 ## After deploy
 
-Test with the same crew-list import that previously created the event/sub-calls but did not assign crew. The preview should show a non-zero matched crew count when imported names or phones correspond to existing crew records.
+Test with the same crew-list import that previously created the event/sub-calls but did not assign crew. The preview should show a non-zero matched crew count when imported names or phones correspond to existing crew records.  
