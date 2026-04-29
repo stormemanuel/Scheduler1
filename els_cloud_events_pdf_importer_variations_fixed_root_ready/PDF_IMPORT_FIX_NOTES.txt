@@ -1,0 +1,12 @@
+PDF import parser fix included in this bundle.
+
+This version expands labor call PDF parsing for:
+- Numeric dates like 3/26, 03/23, 06/03/2026
+- Month dates like May 15, 2026 and weekday-prefixed dates
+- Full day / half day calls that do not have an end time
+- Time separators using -, en dash, em dash, |, or tight spacing
+- Multi-line names where the name breaks before the time row
+- Phone formats with parentheses, spaces, dashes, or plain 10-digit numbers
+- Section headers such as Booth, PO, Floaters, Truck Loaders, Breakout, General Session, etc.
+
+Upload this zip to GitHub with package.json at the repository root. Vercel Root Directory should remain blank.
