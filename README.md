@@ -1,3 +1,4 @@
+[README.md](https://github.com/user-attachments/files/27209935/README.md)
 # ELS Cloud App – Crew + Rates Workspace
 
 This build keeps the existing Supabase contacts and adds a cleaner Master Rates workspace focused on what you pay crew.
