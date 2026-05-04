@@ -1,0 +1,18 @@
+ELS Events upgrade notes
+
+This build keeps the working import/payout/crew assignment behavior and adds two fixes:
+
+1. VS Exchange/page-break PDF parsing
+- Inserts page-break markers during PDF text extraction.
+- Keeps rows that continue onto the next PDF page attached to the prior booth until the next table clearly starts.
+- Delays activation of page-start booth headers when the next rows still belong to the previous booth.
+- Adds PO-aware section matching so rows with PO numbers are assigned to the matching booth/area.
+- Filters trailing On Call/Available notes so those do not contaminate the previous labor row.
+
+2. Inline edit UX
+- Removes the top Overview/Edit mode toggle.
+- Edit buttons now open the edit tool inline under the selected event/day/sub-call/booth section instead of acting like a separate top edit tab.
+- UI time ranges are displayed in normal AM/PM format while the database still stores clean time values.
+
+Upload note:
+package.json is at the repo root. Vercel Root Directory should stay blank.
