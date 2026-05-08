@@ -1,0 +1,19 @@
+VS Exchange import correction
+
+This build keeps the existing import feature, booth/day views, exports, inline edit behavior, role aliases, and schedule-conflict rule.
+
+Fixes included:
+- Rebuilt the VS Exchange PDF row parser around complete crew records instead of loose line fragments.
+- Handles rows split across PDF pages without moving continuation rows into the wrong booth.
+- Restores the missing April 28 labor day.
+- Keeps OPTOS Booth 923 as its own booth/area.
+- Prevents fake dates such as 2026-04-20.
+- Removes malformed rows such as role text containing crew names or future dates.
+- Keeps same-day overlapping schedule conflict prevention during manual assignment and PDF import.
+
+Expected VS Exchange parse from the provided PDF:
+- 18 crew rows
+- 4 labor days: 2026-04-27, 2026-04-28, 2026-04-29, 2026-05-02
+- 9 sub-calls
+- OPTOS Booth 923 included
+- On-call / Available notes skipped
