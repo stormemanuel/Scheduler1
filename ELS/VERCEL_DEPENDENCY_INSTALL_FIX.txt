@@ -1,0 +1,1 @@
+Fixed package-lock.json resolved URLs to use https://registry.npmjs.org/ instead of an internal packaging registry. This prevents Vercel from hanging at Installing dependencies. package.json remains at repo root; Vercel Root Directory should be blank.
