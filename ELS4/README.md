@@ -9,7 +9,7 @@ This is a root-ready Next.js + Supabase build for the ELS operations app. Upload
   - phone match first
   - exact normalized name match
   - first/last match when middle names differ
-  - reversed/comma name variants
+  - reversed/comma name variants 
   - initial-compatible matches when the match is not ambiguous
   - fuzzy fallback with candidate names shown in preview
 - Confirmed matched crew are inserted into `assignments` with real `crew_id` values.
