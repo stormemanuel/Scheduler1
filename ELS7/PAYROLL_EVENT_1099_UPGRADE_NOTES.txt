@@ -1,0 +1,19 @@
+ELS Payroll Event + 1099 Upgrade
+
+What changed:
+- Replaced the placeholder Payroll page with live Supabase-powered event payroll.
+- Each event now shows each assigned tech, the calls they are assigned to, estimated pay, optional pay override, and paid/unpaid status.
+- Paid/unpaid status is saved in the existing show_payroll table using one status row per show + crew.
+- The yearly summary totals paid amount per tech for 1099 prep.
+- Added CSV export for yearly 1099 paid totals.
+- Added CSV export for individual event payroll.
+- Payroll estimates prefer crew-specific rates from crew_positions when available, then fall back to master_rates, then built-in fallback rates.
+- Half-day logic applies to shifts 5 hours or less. Simple OT/DT estimate applies after 10/12 hours.
+
+Supabase:
+- Most existing schemas already include show_payroll.
+- If Payroll says the table is missing, run supabase/payroll_status_migration.sql once in Supabase SQL Editor.
+
+Deployment:
+- This zip is root-ready. package.json is at the top level.
+- Vercel Root Directory should stay blank.
