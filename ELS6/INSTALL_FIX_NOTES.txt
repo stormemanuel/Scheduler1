@@ -1,0 +1,7 @@
+ELS Cloud Payroll Build Install Fix
+
+This package removes the package-lock.json that was generated in the ChatGPT/container environment.
+That lockfile contained private/internal package registry URLs that Vercel cannot access, causing npm install to exit with code 1.
+
+Vercel will now run npm install from package.json using the public npm registry in .npmrc.
+Root Directory should remain blank because package.json is at repo root.
