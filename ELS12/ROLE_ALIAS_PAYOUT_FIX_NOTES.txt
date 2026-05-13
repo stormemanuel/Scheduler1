@@ -1,0 +1,15 @@
+Role Alias + Payout Fix
+
+Changed PDF import role normalization:
+- LED Stagehand imports as LED Assist.
+- LED / LED tech / LED technician import as LED Assist.
+- CF AVT / Client Facing AV Tech / Client Facing Audio Visual Tech import as Client Facing Audio Visual Tech.
+- GAV / AVT / AV Tech / Audio Visual Tech import as General AV.
+
+Changed estimated payout logic:
+- Role aliases are considered when looking up Master Rates.
+- Client Facing Audio Visual Tech has a built-in fallback payout of $400 full day / $200 half day if the master_rates table does not yet have that row.
+- Half-day rate is used when the sub-call duration is 5 hours or less and a half-day rate exists.
+
+Optional SQL:
+- Run supabase/add_role_alias_rates.sql if you want the CF AVT rate to show in your Supabase master_rates table.
