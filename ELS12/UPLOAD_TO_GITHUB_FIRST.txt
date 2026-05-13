@@ -1,3 +1,0 @@
-Upload the contents of this folder to the TOP LEVEL of your GitHub repo.
-Do not upload an extra parent folder.
-Vercel Root Directory should be blank if package.json is at repo root.
