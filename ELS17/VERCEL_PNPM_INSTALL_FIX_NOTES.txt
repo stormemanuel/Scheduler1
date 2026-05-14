@@ -1,0 +1,16 @@
+Vercel install fix
+
+This build switches deployment installs from npm to pnpm because Vercel was failing during npm install/npm ci with: npm error Exit handler never called.
+
+Changes:
+- packageManager set to pnpm@9.15.9
+- Node engine set to 20.x for Vercel stability
+- vercel.json installCommand uses Corepack + pnpm install --no-frozen-lockfile
+- buildCommand uses pnpm run build
+- package-lock.json removed so Vercel does not select npm heuristics
+
+Deploy this zip, then run the existing Supabase SQL if not already applied:
+- supabase/fix_crew_pay_rates.sql
+
+Optional only when ready for contractor tax data:
+- supabase/contractor_tax_profiles_encrypted.sql

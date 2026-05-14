@@ -1,0 +1,24 @@
+Crew Confirmation Checklist Upgrade
+
+Added a persistent show-level checklist for each assigned worker with three confirmation steps:
+
+1. Sent schedule
+2. Confirmed
+3. Day-before confirmation
+
+How to use:
+- Open Events.
+- Select the show.
+- Change view to Checklist.
+- Check the boxes beside each worker.
+- The checklist saves through /api/assignment-checklists.
+- Use Copy Checklist or Export Checklist for a text copy.
+
+Supabase migration:
+Run supabase/assignment_checklists_migration.sql once in the Supabase SQL Editor.
+
+Database table created:
+assignment_checklists
+
+Important:
+This is show-level by worker, not per individual sub-call. If a worker is assigned to multiple booths/days in the same show, the checklist tracks that worker's confirmation status once for the show.
