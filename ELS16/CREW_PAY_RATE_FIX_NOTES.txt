@@ -1,0 +1,13 @@
+Crew Pay Rate Fix
+
+This build separates crew payout rates from client billing rates on the Crew page.
+
+What changed:
+- Added shared crew payout defaults in lib/crew-pay-defaults.ts.
+- Crew CSV import now fills missing pay rates from ELS payout defaults instead of leaving them at $0.
+- Editing a crew role auto-fills the pay rate when the rate is blank/zero.
+- Crew detail tab now labels these as crew payout rates, not client billing rates.
+- Added supabase/fix_crew_pay_rates.sql to correct existing crew_positions rows that were imported with client billing prices such as $700, $650, $550, and $500.
+
+Important:
+Run supabase/fix_crew_pay_rates.sql one time in Supabase SQL Editor if your existing Crew page already shows billing rates as worker pay rates.
