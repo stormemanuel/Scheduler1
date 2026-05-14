@@ -1,7 +1,0 @@
-Vercel install fix for registry/package-manager errors.
-
-This build switches Vercel back to npm but forces Node 18.x and npm 10.9.2 for stability.
-It also removes pnpm usage and adds retry/legacy peer dependency npm settings.
-
-If Vercel Project Settings are set to Node 24.x, package.json engines will override it to Node 18.x.
-Deploy this zip, then run supabase/fix_crew_pay_rates.sql if it has not already been run.
