@@ -1,0 +1,51 @@
+ELS Crew Page - Bigin-style Contacts Upgrade
+
+This build keeps the working Events import/export pipeline intact and changes only the Crew page experience.
+
+Crew page changes:
+- Reworked Crew into a Bigin-style Contacts layout:
+  - left sidebar for city pools, groups, global search, city filter, and quick filters
+  - center contact list/table
+  - right-side contact detail panel
+- Clicking a crew member opens a contact-style detail panel instead of expanding every record inline.
+- Added contact tabs:
+  - Info
+  - Roles & rates
+  - Availability
+  - Notes
+  - Move
+- Added quick actions in the contact panel:
+  - Call
+  - Text
+  - Email
+  - Edit
+  - Delete
+- Added quick filters:
+  - All contacts
+  - OB only
+  - Has conflicts
+  - Has unavailable dates
+  - Missing role
+- Preserved city pool / group organization and bulk move.
+- Added Export visible contacts as CSV.
+- Added Import CSV for crew contacts.
+
+Crew CSV import headers supported:
+- name / crew name / contact name / full name
+- city / city pool / pool
+- group / crew group / subgroup
+- role / position / primary role
+- rate / day rate / pay rate
+- email / email address
+- phone / mobile / contact number
+- tier
+- other city / secondary city
+- ob / owner operator
+- notes
+- conflicts / conflict companies
+- unavailable / unavailable dates
+- description
+
+Deployment:
+- package.json is at the repository root.
+- Vercel Root Directory should remain blank.

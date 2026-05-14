@@ -1,0 +1,18 @@
+Payroll P&L + Mobile + Settings Fix
+
+Changes:
+- Fixed Settings > Master Rates add-position error by omitting null id values on new master_rates upserts.
+- Payroll now includes owner P&L totals for the selected year:
+  estimated revenue, contract labor, expenses, profit, Consecrated Hands 10%, tax reserve 25%, combined reserve, and pure profit.
+- Each event now shows the same P&L numbers per show.
+- Each event has editable revenue override, expenses, and P&L notes.
+- Revenue estimates use the client-facing rate sheet:
+  General AV/GAV/AVT $450 full / $225 half, LED Assist $500 full / $250 half, Stagehand $400 full / $200 half, etc.
+- Contract labor/payroll still uses crew-pay/master rates, not client billing rates.
+- Payroll mobile tables now collapse into card-style rows on phone screens.
+- Added supabase/show_financials_migration.sql for persistent show revenue/expense overrides.
+
+Deploy:
+- Root-ready zip for GitHub/Vercel.
+- Keep Vercel Root Directory blank.
+- If saving P&L fields says show_financials is missing, run supabase/show_financials_migration.sql once in Supabase SQL Editor.
