@@ -1,5 +1,0 @@
-Payroll build fix
-
-This build fixes the Vercel TypeScript error in lib/payroll-data.ts where city pool rows were mapped into string[][] instead of a typed Array<[string, string]> for new Map<string, string>().
-
-No new Supabase SQL is required for this TypeScript build fix.
