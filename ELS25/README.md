@@ -5,7 +5,7 @@ This is a root-ready Next.js + Supabase build for the ELS operations app. Upload
 ## What changed in this build
 
 - Fixed event import crew assignment matching.
-- The import preview now resolves imported crew rows against existing `crew` records using:
+- The import preview now resolves imported crew rows against existing `crew` records using: 
   - phone match first
   - exact normalized name match
   - first/last match when middle names differ
