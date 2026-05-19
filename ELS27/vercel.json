@@ -1,0 +1,11 @@
+{
+  "installCommand": "corepack enable && corepack prepare yarn@1.22.22 --activate && yarn install --network-timeout 600000 --ignore-optional",
+  "buildCommand": "yarn build",
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/text-automation/send-due",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}
