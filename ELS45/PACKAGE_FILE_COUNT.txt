@@ -1,2 +1,0 @@
-Total files: 93
-Largest folder: ELS44/lib (23 files)
