@@ -1,9 +1,0 @@
-ELS41 Clean Under 100 Package
-
-This is the clean full project package for upload.
-Total files: 92
-Largest folder file count: 23 files in ELS41/lib
-
-Run Supabase migration: ELS41/supabase/clients_tech_ratings_migration.sql
-
-Includes: Clients page, optional client company profile, client contacts, tech ratings in assignment notes, client-specific top techs, multiple city/pool groundwork, import button, payroll/rate support files.
