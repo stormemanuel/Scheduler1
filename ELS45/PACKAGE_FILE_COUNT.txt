@@ -1,3 +1,0 @@
-ELS45 full project file count: 92 files
-Largest top-level folder count: 51 files
-Goal: keep each folder under 100 files.
