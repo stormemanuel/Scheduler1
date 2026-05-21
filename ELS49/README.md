@@ -1,6 +1,6 @@
 # ELS46 Feedback Survey UI Update
 
-Feedback forms are now client-friendly quick surveys with fillable HTML export, polished preview cards, and cleaner PDF/DOCX/TXT wording. No new Supabase SQL is required for this update.
+Feedback forms are now client-friendly quick surveys with fillable HTML export, polished preview cards, and cleaner PDF/DOCX/TXT wording. No new Supabase SQL is required for this update. 
 
 ---
 
