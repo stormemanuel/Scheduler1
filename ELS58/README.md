@@ -1,6 +1,6 @@
 # ELS50 Crew Order Inside Sub-Calls
 
-This update adds saved manual ordering for crew assigned to the same sub-call. Use Move up / Move down in Events to set the order, and the exported crew list follows that order. Run `supabase/assignment_order_migration.sql` in Supabase SQL Editor after deploying.
+This update adds saved manual ordering for crew assigned to the same sub-call. Use Move up / Move down in Events to set the order, and the exported crew list follows that order. Run `supabase/assignment_order_migration.sql` in Supabase SQL Editor after deploying. 
 
 ---
 
