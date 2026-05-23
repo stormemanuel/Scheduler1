@@ -1,6 +1,6 @@
 export function onRouterTransitionStart(url: string) {
   if (url.includes("/feedback/")) {
-    console.info("ELS feedback navigation", { url, at: new Date().toISOString() });
+    console.info("ELS feedback navigation", { url, at: new Date().toISOString() }); 
   }
 }
 
