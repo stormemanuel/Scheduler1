@@ -147,6 +147,7 @@ type DetailTab = "info" | "roles" | "availability" | "onboarding" | "notes" | "m
 
 const ALL_GROUPS = "__all_groups__";
 const UNASSIGNED_CITY = "__unassigned_city__";
+const CREW_SELECTED_CITY_STORAGE_KEY = "els.crew.selectedCityPoolId.v1";
 const MASTER_CREW_VIEW = "__master_crew_view__";
 
 const CUSTOM_ROLE_OPTION = "__custom_role__";
@@ -1136,6 +1137,7 @@ export default function CrewClient({ cityPools: initialCityPools, crewGroups: in
   const defaultRateForRole = (roleName: string) => matchingDefaultRole(roleName, roleOptions)?.fullDay || getDefaultCrewPayRate(roleName);
   const initialDisplayCity = initialCityPools.find((pool) => !isCoordinatorSystemPoolName(pool.name)) || initialCityPools[0];
   const [selectedCityId, setSelectedCityId] = useState<string>(initialDisplayCity?.id || UNASSIGNED_CITY);
+  const [selectedCityPreferenceLoaded, setSelectedCityPreferenceLoaded] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<string>(ALL_GROUPS);
   const [globalSearch, setGlobalSearch] = useState("");
   const [citySearch, setCitySearch] = useState("");
@@ -1185,6 +1187,7 @@ export default function CrewClient({ cityPools: initialCityPools, crewGroups: in
   const selectedOwnerUser = crewOwnerView !== MASTER_CREW_VIEW ? appUserById.get(crewOwnerView) ?? null : null;
   const selectedOwnerAllowedPoolIds = coordinatorPoolAccessByUser[crewOwnerView] ?? selectedOwnerUser?.allowed_city_pool_ids ?? [];
   const selectedOwnerAllowedPoolSet = new Set(selectedOwnerAllowedPoolIds);
+  const selectedCityStorageKey = `${CREW_SELECTED_CITY_STORAGE_KEY}:${currentUserId || "guest"}:${crewOwnerView}`;
 
   const ownerScopedCrewRecords = useMemo(() => {
     if (!isAdminCrewView) return crewRecords.filter((record) => !record.coordinator_hidden_at);
@@ -1284,8 +1287,43 @@ export default function CrewClient({ cityPools: initialCityPools, crewGroups: in
   }
 
   useEffect(() => {
-    if ((!selectedCityId || (selectedCityId !== UNASSIGNED_CITY && isCoordinatorSystemPoolName(cityPools.find((pool) => pool.id === selectedCityId)?.name))) && cityPoolsForDisplay[0]?.id) setSelectedCityId(cityPoolsForDisplay[0].id);
-  }, [cityPools, cityPoolsForDisplay, selectedCityId]);
+    setSelectedCityPreferenceLoaded(false);
+  }, [selectedCityStorageKey]);
+
+  useEffect(() => {
+    if (selectedCityPreferenceLoaded) return;
+    if (typeof window === "undefined") {
+      setSelectedCityPreferenceLoaded(true);
+      return;
+    }
+
+    const savedCityId = window.localStorage.getItem(selectedCityStorageKey);
+    const savedCityStillExists = Boolean(savedCityId && (savedCityId === UNASSIGNED_CITY || cityPoolsForDisplay.some((pool) => pool.id === savedCityId)));
+
+    if (savedCityStillExists && savedCityId) {
+      setSelectedCityId(savedCityId);
+    } else if (cityPoolsForDisplay[0]?.id) {
+      setSelectedCityId(cityPoolsForDisplay[0].id);
+    }
+
+    setSelectedCityPreferenceLoaded(true);
+  }, [cityPoolsForDisplay, selectedCityPreferenceLoaded, selectedCityStorageKey]);
+
+  useEffect(() => {
+    if (!selectedCityPreferenceLoaded) return;
+    const selectedPool = cityPools.find((pool) => pool.id === selectedCityId);
+    const selectedPoolIsHiddenSystemPool = selectedCityId !== UNASSIGNED_CITY && isCoordinatorSystemPoolName(selectedPool?.name);
+    const selectedPoolMissing = selectedCityId !== UNASSIGNED_CITY && !cityPoolsForDisplay.some((pool) => pool.id === selectedCityId);
+
+    if ((!selectedCityId || selectedPoolIsHiddenSystemPool || selectedPoolMissing) && cityPoolsForDisplay[0]?.id) {
+      setSelectedCityId(cityPoolsForDisplay[0].id);
+    }
+  }, [cityPools, cityPoolsForDisplay, selectedCityId, selectedCityPreferenceLoaded]);
+
+  useEffect(() => {
+    if (!selectedCityPreferenceLoaded || typeof window === "undefined") return;
+    window.localStorage.setItem(selectedCityStorageKey, selectedCityId || UNASSIGNED_CITY);
+  }, [selectedCityId, selectedCityPreferenceLoaded, selectedCityStorageKey]);
 
   useEffect(() => {
     if (selectedCityId && selectedCityId !== UNASSIGNED_CITY) setBulkCityId((current) => current || selectedCityId);
