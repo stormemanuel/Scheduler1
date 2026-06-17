@@ -4,7 +4,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 type CookieToSet = {
   name: string;
   value: string;
-  options?: CookieOptions; 
+  options?: CookieOptions;  
 };
 
 export async function middleware(request: NextRequest) {
