@@ -8,7 +8,7 @@ type CookieToSet = {
 };
 
 export async function middleware(request: NextRequest) {
-  const requestHeaders = new Headers(request.headers);
+  const requestHeaders = new Headers(request.headers); 
   requestHeaders.set("x-els-pathname", request.nextUrl.pathname);
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
