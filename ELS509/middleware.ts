@@ -6,7 +6,7 @@ type CookieToSet = {
   value: string;
   options?: CookieOptions;
 };
-
+ 
 export async function middleware(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-els-pathname", request.nextUrl.pathname);
