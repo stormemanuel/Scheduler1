@@ -1,6 +1,7 @@
 "use client";
 
 import { Component, Fragment, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { availabilityInterval, availabilityOverlaps } from "@/lib/availability-conflicts";
 import { createPortal } from "react-dom";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -1024,7 +1025,7 @@ const emptyShow = {
   default_hourly_rate: "",
   coordinator_name: "Storm Leigh",
   coordinator_phone: "504-657-6618",
-  include_project_manager: false,
+  include_project_manager: true,
 };
 
 const emptyDay = {
@@ -2662,7 +2663,7 @@ const defaultEventMessageMeta: EventMessageMeta = {
   default_hourly_rate: "",
   coordinator_name: "Storm Leigh",
   coordinator_phone: "504-657-6618",
-  include_project_manager: false,
+  include_project_manager: true,
 };
 
 function parseLegacyEventMeta(notes: string) {
@@ -3438,6 +3439,7 @@ function EventsClientInner({
   const [availabilityCandidateRole, setAvailabilityCandidateRole] = useState("");
   const [availabilityCandidateSearch, setAvailabilityCandidateSearch] = useState("");
   const [availabilityIncludeAssigned, setAvailabilityIncludeAssigned] = useState(false);
+  const [availabilityShowExistingCrewOnly, setAvailabilityShowExistingCrewOnly] = useState(false);
   const [selectedAvailabilityCrewIds, setSelectedAvailabilityCrewIds] = useState<string[]>([]);
   const [selectedAvailabilitySubCallIds, setSelectedAvailabilitySubCallIds] = useState<string[]>([]);
   const [availabilityPanelOpen, setAvailabilityPanelOpen] = useState(false);
@@ -4640,6 +4642,34 @@ function EventsClientInner({
     return new Set(assignments.filter((assignment) => callIds.has(assignment.sub_call_id)).map((assignment) => assignment.crew_id));
   }, [availabilityEventCalls, assignments]);
 
+  // Compare actual shift intervals, not event-wide crew membership. A worker on
+  // another day of the show can still be contacted for an unfilled call.
+  const availabilityBookingStatus = useMemo(() => {
+    const requested = selectedAvailabilitySubCalls.map(({ day, call }) => availabilityInterval(day.labor_date, call.start_time, call.end_time));
+    const requestUnknown = !requested.length || requested.some((interval) => interval === null);
+    const byCrew = new Map<string, { booked: number; conflicts: number; unknown: boolean; scheduledDates: string[] }>();
+    for (const assignment of assignments) {
+      if (!assignmentCountsAsFilled(assignment)) continue;
+      const call = subCallById.get(assignment.sub_call_id);
+      const day = call ? laborDayById.get(call.labor_day_id) : null;
+      const record = byCrew.get(assignment.crew_id) || { booked: 0, conflicts: 0, unknown: requestUnknown, scheduledDates: [] };
+      const interval = call && day ? availabilityInterval(day.labor_date, assignmentStart(assignment, call), assignmentEnd(assignment, call)) : null;
+      record.unknown ||= interval === null;
+      const conflicts = interval && requested.some((target) => target && availabilityOverlaps(target, interval)) ? 1 : 0;
+      if (day?.show_id === selectedShow?.id) {
+        record.booked += 1;
+        if (!record.scheduledDates.includes(day.labor_date)) record.scheduledDates.push(day.labor_date);
+      }
+      record.conflicts += conflicts;
+      byCrew.set(assignment.crew_id, record);
+    }
+    return byCrew;
+  }, [selectedAvailabilitySubCalls, assignments, subCallById, laborDayById, selectedShow?.id]);
+
+  useEffect(() => {
+    setSelectedAvailabilityCrewIds([]);
+  }, [selectedAvailabilitySubCallIds]);
+
   const availabilityRatingStats = useMemo(() => {
     const overallValues = new Map<string, number[]>();
     const preferredValues = new Map<string, number[]>();
@@ -4672,6 +4702,8 @@ function EventsClientInner({
       .filter((crew) => {
         const phoneDigits = safeText(crew.phone).replace(/\D/g, "");
         if (crew.blacklisted || phoneDigits.length < 10) return false;
+        const booked = availabilityBookingStatus.get(crew.id);
+        if (availabilityShowExistingCrewOnly && (!booked?.booked || (booked.conflicts > 0 || booked.unknown))) return false;
         if (!availabilityIncludeAssigned && availabilityAssignedCrewIds.has(crew.id)) return false;
         if (selectedCity && selectedCity !== "all cities" && !crewMatchesEventPool(crew, availabilityCandidateCity)) return false;
         if (!token) return true;
@@ -4693,7 +4725,8 @@ function EventsClientInner({
         const roleScore = selectedRole
           ? Math.max(0, ...(crew.positions ?? []).map((position) => roleRateMatchScore(position.role_name, selectedRole)))
           : 0;
-        return { crew, rating, roleScore, alreadyAssigned: availabilityAssignedCrewIds.has(crew.id) };
+        const booking = availabilityBookingStatus.get(crew.id);
+        return { crew, rating, roleScore, alreadyAssigned: availabilityAssignedCrewIds.has(crew.id), bookingConflicts: booking?.conflicts || 0, bookingUnknown: booking?.unknown || !selectedAvailabilitySubCalls.length || selectedAvailabilitySubCalls.some(({ day, call }) => !availabilityInterval(day.labor_date, call.start_time, call.end_time)), bookedDates: (booking?.scheduledDates || []).sort() };
       })
       .sort((a, b) => {
         const ratingPriority = recommendationSortValue(b.rating.median) - recommendationSortValue(a.rating.median);
@@ -4703,12 +4736,13 @@ function EventsClientInner({
         if (b.rating.count !== a.rating.count) return b.rating.count - a.rating.count;
         return a.crew.name.localeCompare(b.crew.name);
       });
-  }, [availabilityCandidateSearch, availabilityCandidateCity, availabilityCandidateRole, availabilityRequestDetails, availabilityIncludeAssigned, availabilityAssignedCrewIds, availabilityRatingStats, crewRecords]);
+  }, [availabilityCandidateSearch, availabilityCandidateCity, availabilityCandidateRole, availabilityRequestDetails, availabilityIncludeAssigned, availabilityShowExistingCrewOnly, availabilityBookingStatus, availabilityAssignedCrewIds, availabilityRatingStats, crewRecords]);
 
   useEffect(() => {
     setAvailabilityCandidateCity(eventPool || "All cities");
     setAvailabilityCandidateSearch("");
     setAvailabilityIncludeAssigned(false);
+    setAvailabilityShowExistingCrewOnly(false);
     setSelectedAvailabilityCrewIds([]);
     setSelectedAvailabilitySubCallIds([]);
   }, [selectedShow?.id, eventPool]);
@@ -5304,7 +5338,7 @@ function EventsClientInner({
           ? `Crew Lead: ${meta.crew_lead_name}${meta.crew_lead_phone ? `\nPhone: ${formatPhone(meta.crew_lead_phone)}` : ""}`
           : leadAssignment?.crew
             ? `Crew Lead: ${leadAssignment.crew.name}\nPhone: ${formatPhone(leadAssignment.crew.phone) || "____________________"}`
-            : "Crew Lead: ____________________\nPhone: ____________________";
+            : "";
 
         const text = [
           scheduleHeader,
@@ -8098,6 +8132,17 @@ function EventsClientInner({
       setMsg({ kind: "error", text: "Select at least one crew member for the availability request." });
       return;
     }
+    if (!selectedAvailabilitySubCalls.length || selectedAvailabilitySubCalls.some(({ day, call }) => !availabilityInterval(day.labor_date, call.start_time, call.end_time))) {
+      setMsg({ kind: "error", text: "Select sub-calls with complete, valid dates and times before queueing availability." });
+      return;
+    }
+    if (selectedAvailabilityCrewIds.some((id) => {
+      const booking = availabilityBookingStatus.get(id);
+      return booking && (booking.conflicts > 0 || booking.unknown);
+    })) {
+      setMsg({ kind: "error", text: "Selected crew have a booking conflict or incomplete schedule. Clear the selection and review the requested calls." });
+      return;
+    }
     if (!automationDraft.availability_template.trim()) {
       setMsg({ kind: "error", text: "Enter the availability message first." });
       return;
@@ -8117,6 +8162,7 @@ function EventsClientInner({
       crew_ids: selectedAvailabilityCrewIds,
       role_name: availabilityRequestDetails.position || availabilityCandidateRole,
       city_name: availabilityCandidateCity === "All cities" ? "" : availabilityCandidateCity,
+      sub_call_ids: selectedAvailabilitySubCalls.map(({ call }) => call.id),
       availability_calls: selectedAvailabilitySubCalls.map(({ day, call }) => ({
         labor_date: day.labor_date,
         start_time: call.start_time,
@@ -12469,15 +12515,22 @@ function EventsClientInner({
 
             <div className="row" style={{ alignItems: "center", marginTop: 8 }}>
               <label className="row small" style={{ justifyContent: "flex-start", alignItems: "center" }}>
-                <input type="checkbox" checked={availabilityIncludeAssigned} onChange={(event) => setAvailabilityIncludeAssigned(event.target.checked)} />
+                <input type="checkbox" checked={availabilityIncludeAssigned} onChange={(event) => { setAvailabilityIncludeAssigned(event.target.checked); if (!event.target.checked) setAvailabilityShowExistingCrewOnly(false); }} />
                 Include crew already assigned to this event
               </label>
+              <button type="button" className={availabilityShowExistingCrewOnly ? "primary" : "ghost"} disabled={!selectedAvailabilitySubCalls.length} onClick={() => {
+                const next = !availabilityShowExistingCrewOnly;
+                setAvailabilityShowExistingCrewOnly(next);
+                if (next) setAvailabilityIncludeAssigned(true);
+                setSelectedAvailabilityCrewIds([]);
+              }}>Already on show · Potentially available ({[...availabilityBookingStatus.values()].filter((b) => b.booked > 0 && b.conflicts === 0 && !b.unknown).length})</button>
+              {availabilityShowExistingCrewOnly ? <span className="small muted">No conflicts found in loaded schedules. The server rechecks all bookings before queueing; personal availability is unconfirmed.</span> : null}
               <span className="small muted">Showing {displayedAvailabilityCandidates.length}{availabilityCandidates.length > displayedAvailabilityCandidates.length ? ` of ${availabilityCandidates.length}` : ""} matching crew</span>
             </div>
 
             <div className="toolbar" style={{ marginTop: 10 }}>
-              <button type="button" className="ghost" onClick={() => setSelectedAvailabilityCrewIds(displayedAvailabilityIds.slice(0, 10))} disabled={!displayedAvailabilityIds.length}>Select top 10</button>
-              <button type="button" className="ghost" onClick={() => setSelectedAvailabilityCrewIds(displayedAvailabilityIds)} disabled={!displayedAvailabilityIds.length}>Select all shown</button>
+              <button type="button" className="ghost" onClick={() => setSelectedAvailabilityCrewIds(displayedAvailabilityIds.filter((id) => !availabilityBookingStatus.get(id)?.conflicts && !availabilityBookingStatus.get(id)?.unknown).slice(0, 10))} disabled={!displayedAvailabilityIds.length}>Select top 10</button>
+              <button type="button" className="ghost" onClick={() => setSelectedAvailabilityCrewIds(displayedAvailabilityIds.filter((id) => !availabilityBookingStatus.get(id)?.conflicts && !availabilityBookingStatus.get(id)?.unknown))} disabled={!displayedAvailabilityIds.length}>Select all shown</button>
               <button type="button" className="ghost" onClick={() => setSelectedAvailabilityCrewIds([])} disabled={!selectedAvailabilityCrewIds.length}>Clear</button>
             </div>
 
@@ -12495,6 +12548,7 @@ function EventsClientInner({
                         <input
                           type="checkbox"
                           checked={selected}
+                          disabled={item.bookingConflicts > 0 || item.bookingUnknown}
                           onChange={(event) => setSelectedAvailabilityCrewIds((current) => event.target.checked
                             ? [...new Set([...current, item.crew.id])]
                             : current.filter((id) => id !== item.crew.id))}
@@ -12504,13 +12558,14 @@ function EventsClientInner({
                           <strong>#{index + 1} {item.crew.name}</strong>
                           <div className="small muted">{formatPhone(item.crew.phone)} · {[item.crew.city_name, ...(item.crew.additional_city_pool_names ?? [])].filter(Boolean).join(" / ") || "No city pool"}</div>
                           <div className="small muted">{positions.length ? positions.slice(0, 4).join(" · ") : "No positions saved"}</div>
+                          {item.alreadyAssigned ? <div className="small muted">Already working this show: {item.bookedDates.join(", ") || "date unavailable"}. {item.bookingConflicts ? "Overlaps a requested call — select a different date." : "No overlap found in loaded schedules; the server checks all bookings before queueing."}</div> : null}
                         </div>
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <span className={topTechBadgeClass(item.rating.median)}>{ratingLabel}</span>
                         <div style={{ marginTop: 5 }}>
                           <span className="badge">{availabilityCandidateRole ? (item.roleScore > 0 ? "Position match" : "Other role") : "Any position"}</span>
-                          {item.alreadyAssigned ? <span className="badge" style={{ marginLeft: 5 }}>Already assigned</span> : null}
+                          {item.alreadyAssigned ? <span className="badge" style={{ marginLeft: 5 }}>{item.bookingUnknown ? "Schedule incomplete" : item.bookingConflicts ? "Booked during selected call" : "Potentially available"}</span> : null}
                         </div>
                       </div>
                     </div>
@@ -14673,7 +14728,7 @@ function EventsClientInner({
                 <label className="field"><span>Coordinator phone</span><input value={showForm.coordinator_phone} onChange={(e) => setShowForm((c) => ({ ...c, coordinator_phone: e.target.value }))} /></label>
               </div>
               <label className="checkbox-card" style={{ marginTop: 10 }}>
-                <input type="checkbox" checked={showForm.include_project_manager} onChange={(e) => setShowForm((c) => ({ ...c, include_project_manager: e.target.checked }))} disabled={!showForm.client_contact_id} />
+                <input type="checkbox" checked={showForm.include_project_manager} onChange={(e) => setShowForm((c) => ({ ...c, include_project_manager: e.target.checked }))} />
                 <span>
                   <strong>Include assigned project manager on crew schedules</strong>
                   <small>{showForm.client_contact_id ? "Adds the saved project manager’s name and phone to schedule messages." : "Choose a project manager/client contact above first."}</small>

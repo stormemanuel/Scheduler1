@@ -1,0 +1,29 @@
+{
+  "production_build": "passed",
+  "typescript": "passed",
+  "client_interval_tests": 19,
+  "server_mock_tests": 12,
+  "http_checks": [
+    {
+      "path": "/login",
+      "status": 200,
+      "result": "PASS"
+    },
+    {
+      "path": "/events",
+      "status": 200,
+      "result": "PASS"
+    },
+    {
+      "path": "/api/user-access?action=manifest",
+      "status": 200,
+      "result": "PASS"
+    },
+    {
+      "path": "POST /api/text-automation",
+      "result": "PASS: missing backend settings reject queueing",
+      "status": 500
+    }
+  ],
+  "live_ASH_records": "not tested: Supabase configuration unavailable"
+}

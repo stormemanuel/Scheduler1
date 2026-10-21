@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:availability": "node tests/availability-client.cjs && node tests/availability-server.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.5.2",

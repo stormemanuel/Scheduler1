@@ -1,3 +1,4 @@
+import { availabilityInterval, availabilityOverlaps, availabilityAssignmentActive } from "@/lib/availability-conflicts";
 import { phoneForMessaging } from "@/lib/crew-types";
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
@@ -1038,8 +1039,8 @@ function nextScheduleByCrew(show: ShowRow, days: LaborDayRow[], calls: SubCallRo
     const crewLeadName = safeText(meta.crew_lead_name) || safeText(leadCrew?.name);
     const crewLeadPhone = safeText(meta.crew_lead_phone) || safeText(leadCrew?.phone);
     const crewLeadLine = crewLeadName
-      ? [`Crew Lead: ${crewLeadName}`, crewLeadPhone ? `Phone: ${crewLeadPhone}` : "Phone: ____________________"].join("\n")
-      : "Crew Lead: ____________________\nPhone: ____________________";
+      ? [`Crew Lead: ${crewLeadName}`, crewLeadPhone ? `Phone: ${crewLeadPhone}` : ""].join("\n")
+      : "";
     const projectManagerPhone = safeText(projectManagerContact?.cell_phone) || safeText(projectManagerContact?.phone);
     const includeProjectManager = (meta as Record<string, unknown>).include_project_manager === true || safeText(meta.include_project_manager).toLowerCase() === "true";
     const projectManagerLine = includeProjectManager && safeText(projectManagerContact?.name)
@@ -1673,7 +1674,7 @@ async function buildSelectedDayReminderPlan(
       area_line: `Area: ${safeText(row.call.area) || "Area TBD"}`,
       booth_line: scheduleBoothNumber(row.call) ? `Booth: ${scheduleBoothNumber(row.call)}` : "",
       po_line: safeText(row.call.po_number) ? `PO: ${safeText(row.call.po_number)}` : "",
-      crew_lead_line: "Crew Lead: ____________________\nPhone: ____________________",
+      crew_lead_line: "",
       project_manager_line: "",
       schedule: `${formatDate(row.day.labor_date)} - ${assignmentTimeRange(row.assignment, row.call)} - ${dayTypeLabel(assignmentDayType(row.assignment, row.call))} - ${messageRateForCall(row.call, row.crew, bundle.show, bundle.masterRates, parseEventMeta(bundle.show.notes), bundle.rateOverrides.get(row.assignment.id))}`,
       next_call: `${formatDate(row.day.labor_date)} ${assignmentTimeRange(row.assignment, row.call)}`,
@@ -2045,6 +2046,63 @@ async function queueCrewBulkMessage(admin: NonNullable<ReturnType<typeof createS
   return { queued: (data || []) as IntroQueueRow[], skipped: contacts.length - rows.length };
 }
 
+// Service-role reads intentionally cover bookings outside the caller's visible
+// shows. Do not return details of those bookings to the client.
+async function readAvailabilityRows<T>(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  table: string, columns: string, filter: string, ids: string[],
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const chunk = ids.slice(offset, offset + 100);
+    let complete = false;
+    for (let page = 0; page < 100; page++) {
+      // Keep pages below PostgREST's standard response cap and use stable order.
+      const result = await admin.from(table).select(columns).in(filter, chunk).order("id").range(page * 100, page * 100 + 99);
+      if (result.error) throw new Error("Unable to verify availability against current bookings. No messages queued.");
+      const data = (result.data || []) as unknown as T[];
+      rows.push(...data);
+      if (data.length < 100) { complete = true; break; }
+    }
+    if (!complete) throw new Error("Booking check exceeded its safe limit. No messages queued.");
+  }
+  return rows;
+}
+
+async function validateAvailabilityBookings(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  showId: string, crewIds: string[], callIds: string[],
+) {
+  if (!callIds.length) throw new Error("Select specific sub-calls before queueing availability.");
+  const calls = await readAvailabilityRows<SubCallRow>(admin, "sub_calls", "id, labor_day_id, role_name, area, location, start_time, end_time", "id", callIds);
+  if (calls.length !== callIds.length) throw new Error("Requested sub-calls changed or no longer exist. Refresh and try again.");
+  const days = await readAvailabilityRows<LaborDayRow>(admin, "labor_days", "id, show_id, labor_date", "id", [...new Set(calls.map((call) => call.labor_day_id))]);
+  const dayById = new Map(days.map((day) => [day.id, day]));
+  const requested = calls.map((call) => {
+    const day = dayById.get(call.labor_day_id);
+    if (!day || day.show_id !== showId) throw new Error("Requested sub-calls do not belong to this event.");
+    const interval = availabilityInterval(day.labor_date, call.start_time, call.end_time);
+    if (!interval) throw new Error("Requested calls have incomplete dates or times. No messages queued.");
+    return interval;
+  });
+  const assignments = (await readAvailabilityRows<AssignmentRow>(admin, "assignments", "id, sub_call_id, crew_id, status, start_time, end_time", "crew_id", crewIds))
+    .filter((assignment) => availabilityAssignmentActive(assignment.status));
+  const bookedCalls = await readAvailabilityRows<SubCallRow>(admin, "sub_calls", "id, labor_day_id, start_time, end_time", "id", [...new Set(assignments.map((assignment) => assignment.sub_call_id))]);
+  const bookedDays = await readAvailabilityRows<LaborDayRow>(admin, "labor_days", "id, show_id, labor_date", "id", [...new Set(bookedCalls.map((call) => call.labor_day_id))]);
+  const bookedCallById = new Map(bookedCalls.map((call) => [call.id, call]));
+  const bookedDayById = new Map(bookedDays.map((day) => [day.id, day]));
+  for (const assignment of assignments) {
+    const call = bookedCallById.get(assignment.sub_call_id);
+    const day = call && bookedDayById.get(call.labor_day_id);
+    const interval = call && day ? availabilityInterval(day.labor_date, assignmentStartTime(assignment, call), assignmentEndTime(assignment, call)) : null;
+    if (!interval) throw new Error("Selected crew have incomplete booking data. No messages queued; review schedules first.");
+    if (requested.some((target) => availabilityOverlaps(target, interval))) {
+      throw new Error("Selected crew have a booking conflict with the requested calls. No messages queued; refresh and select different crew or calls.");
+    }
+  }
+  return calls.map((call) => ({ ...call, labor_date: dayById.get(call.labor_day_id)!.labor_date }));
+}
+
 async function queueAvailabilityCandidates(
   admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
   body: Record<string, unknown>,
@@ -2067,18 +2125,15 @@ async function queueAvailabilityCandidates(
   const show = showRes.data as ShowRow;
   const crewById = new Map(((crewRes.data || []) as Array<{ id: string; name: string | null; phone: string | null }>).map((crew) => [crew.id, crew]));
   const senderName = senderNameForMessage(user);
-  const availabilityCalls: AvailabilityCallRequest[] = (Array.isArray(body.availability_calls) ? body.availability_calls : [])
-    .map((item) => item as Record<string, unknown>)
-    .map((item) => ({
-      labor_date: safeText(item.labor_date),
-      start_time: safeText(item.start_time),
-      end_time: safeText(item.end_time),
-      role_name: safeText(item.role_name),
-      area: safeText(item.area),
-      location: safeText(item.location),
-      rate: safeText(item.rate),
-    }))
-    .filter((item) => item.labor_date || item.start_time || item.end_time || item.role_name || item.area || item.rate);
+  // Never trust client-supplied dates/times for either conflict checks or messages.
+  const callIds = cleanQueueIds(body.sub_call_ids, 250);
+  const verifiedCalls = await validateAvailabilityBookings(admin, showId, crewIds, callIds);
+  const availabilityCalls: AvailabilityCallRequest[] = verifiedCalls.map((call) => ({
+    labor_date: call.labor_date,
+    start_time: safeText(call.start_time), end_time: safeText(call.end_time),
+    role_name: safeText(call.role_name), area: safeText(call.area),
+    location: safeText(call.location), rate: safeText(body.availability_rate),
+  }));
   const uniqueValues = (values: string[]) => [...new Set(values.map(safeText).filter(Boolean))];
   const callRoles = uniqueValues(availabilityCalls.map((call) => call.role_name || "Crew"));
   const callAreas = uniqueValues(availabilityCalls.map((call) => call.area));

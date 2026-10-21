@@ -71,6 +71,11 @@ type PurchaseOrderDayDraft = {
   calculatedOvertimeHours: string;
   calculatedOvertimeRate: string;
   defaultAmount: string;
+  payMode: "day" | "hourly";
+  regularHours: string;
+  regularRate: string;
+  scheduledHours: string;
+  scheduledTime: string;
   overtimeHours: string;
   overtimeRate: string;
   doubleTimeHours: string;
@@ -114,7 +119,12 @@ function purchaseOrderDraftFor(row: PayrollCrewShowRow): PurchaseOrderDraft {
       // Base pay is always regenerated from Events. Any assignment-specific
       // rate saved in Events is already reflected in call.amount. Do not carry
       // a stale/manual PO base rate forward into a new revision.
-      defaultAmount: currencyText(calculatedDefaultAmount),
+      defaultAmount: saved?.payMode === "hourly" ? currencyText(saved.defaultAmount) : currencyText(calculatedDefaultAmount),
+      payMode: saved?.payMode === "hourly" ? "hourly" : "day",
+      regularHours: String(saved?.regularHours ?? ""),
+      regularRate: saved?.regularRate ? currencyText(saved.regularRate) : "",
+      scheduledHours: String(calls.reduce((sum, call) => sum + Math.max(0, Number(call.durationHours || 0)), 0)),
+      scheduledTime: calls.map((call) => `${call.startTime || "?"}–${call.endTime || "?"}`).join("; "),
       overtimeHours: saved ? (saved.overtimeHours ? String(saved.overtimeHours) : "") : defaults.overtimeHours ? String(Math.round(defaults.overtimeHours * 100) / 100) : "",
       overtimeRate: saved ? (saved.overtimeRate ? currencyText(saved.overtimeRate) : "") : calculatedOvertimeRate ? currencyText(calculatedOvertimeRate) : "",
       doubleTimeHours: saved?.doubleTimeHours ? String(saved.doubleTimeHours) : "",
@@ -122,7 +132,7 @@ function purchaseOrderDraftFor(row: PayrollCrewShowRow): PurchaseOrderDraft {
     };
   });
   if (!days.length && po?.days?.length) {
-    days.push(...po.days.map((day) => ({
+    days.push(...po.days.map((day): PurchaseOrderDayDraft => ({
       key: day.key,
       laborDate: day.laborDate,
       description: day.description,
@@ -131,6 +141,11 @@ function purchaseOrderDraftFor(row: PayrollCrewShowRow): PurchaseOrderDraft {
       calculatedOvertimeHours: day.overtimeHours ? String(day.overtimeHours) : "",
       calculatedOvertimeRate: day.overtimeRate ? currencyText(day.overtimeRate) : "",
       defaultAmount: currencyText(day.defaultAmount),
+      payMode: day.payMode === "hourly" ? "hourly" : "day",
+      regularHours: String(day.regularHours ?? ""),
+      regularRate: day.regularRate ? currencyText(day.regularRate) : "",
+      scheduledHours: String(day.scheduledHours ?? ""),
+      scheduledTime: day.scheduledTime || "",
       overtimeHours: day.overtimeHours ? String(day.overtimeHours) : "",
       overtimeRate: day.overtimeRate ? currencyText(day.overtimeRate) : "",
       doubleTimeHours: day.doubleTimeHours ? String(day.doubleTimeHours) : "",
@@ -208,7 +223,12 @@ function purchaseOrderDaysFromDraft(draft: PurchaseOrderDraft) {
     laborDate: day.laborDate,
     description: day.description.trim(),
     note: day.note.trim(),
-    defaultAmount: poDraftNumber(day.defaultAmount),
+    defaultAmount: day.payMode === "hourly" ? Math.round(poDraftNumber(day.regularHours) * poDraftNumber(day.regularRate) * 100) / 100 : poDraftNumber(day.defaultAmount),
+    payMode: day.payMode,
+    regularHours: poDraftNumber(day.regularHours),
+    regularRate: poDraftNumber(day.regularRate),
+    scheduledHours: poDraftNumber(day.scheduledHours),
+    scheduledTime: day.scheduledTime,
     overtimeHours: poDraftNumber(day.overtimeHours),
     overtimeRate: poDraftNumber(day.overtimeRate),
     doubleTimeHours: poDraftNumber(day.doubleTimeHours),
@@ -259,7 +279,7 @@ function purchaseOrderPreviewLines(draft: PurchaseOrderDraft) {
   if (days.length) {
     for (const day of days) {
       const date = formatPayrollDate(day.laborDate) || "Scheduled day";
-      lines.push({ label: `${date} — Default day pay`, detail: [day.description, day.note ? `Day note: ${day.note}` : ""].filter(Boolean).join(" · "), amount: day.defaultAmount });
+      lines.push({ label: `${date} — ${day.payMode === "hourly" ? "Regular hours" : "Day pay"}`, detail: [day.scheduledTime ? `Scheduled ${day.scheduledTime} (${day.scheduledHours} hr)` : `Scheduled ${day.scheduledHours} hr`, day.payMode === "hourly" ? `${day.regularHours} regular hr × ${money(day.regularRate)}` : "", day.description, day.note ? `Day note: ${day.note}` : ""].filter(Boolean).join(" · "), amount: day.defaultAmount });
       const overtime = Math.round(day.overtimeHours * day.overtimeRate * 100) / 100;
       const doubleTime = Math.round(day.doubleTimeHours * day.doubleTimeRate * 100) / 100;
       if (overtime > 0) lines.push({ label: `${date} — Overtime`, detail: `${day.overtimeHours} hr × ${money(day.overtimeRate)}`, amount: overtime });
@@ -869,7 +889,61 @@ async function readPayrollResponse<T>(response: Response): Promise<T> {
   }
 }
 
+type ForecastBasis = "last-worked" | "scheduled";
+type ForecastEntry = { key: string; showName: string; payee: string; kind: "Technician" | "Coordinator"; amount: number; date: string | null };
+
+function forecastDatePlus30(value: string | null | undefined): string | null {
+  const date = String(value || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const parsed = new Date(`${date}T12:00:00Z`);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return null;
+  parsed.setUTCDate(parsed.getUTCDate() + 30);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function lastWorkedDateForRow(row: PayrollCrewShowRow): string | null {
+  const dates = row.calls.map((call) => String(call.laborDate || "").slice(0, 10)).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
+  return dates.at(-1) ?? null;
+}
+
+function forecastEntriesForEvents(events: PayrollEventSummary[], basis: ForecastBasis): ForecastEntry[] {
+  const result: ForecastEntry[] = [];
+  for (const event of events) {
+    for (const row of event.rows) {
+      if (paymentStatusFor(row) === "paid") continue;
+      const amount = payable(row);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      result.push({ key: `crew:${row.key}`, showName: event.showName, payee: row.crewName, kind: "Technician", amount,
+        date: basis === "scheduled" ? row.scheduledFor || null : forecastDatePlus30(lastWorkedDateForRow(row)) });
+    }
+    const coordinators = event.coordinatorPayments?.length ? event.coordinatorPayments : event.coordinatorPayment ? [event.coordinatorPayment] : [];
+    const seen = new Set<string>();
+    for (const coordinator of coordinators) {
+      const id = coordinator.coordinatorUserId || coordinator.coordinatorName;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (coordinator.paymentStatus === "paid" || coordinator.paid) continue;
+      const amount = Number(coordinator.payableAmount);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      const lastDate = event.rows.flatMap((row) => row.calls.map((call) => String(call.laborDate || "").slice(0, 10))).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort().at(-1) || event.showEnd;
+      result.push({ key: `coordinator:${event.showId}:${id}`, showName: event.showName, payee: coordinator.coordinatorName, kind: "Coordinator", amount,
+        date: basis === "scheduled" ? coordinator.scheduledFor || null : forecastDatePlus30(lastDate) });
+    }
+  }
+  return result;
+}
+
+function dateOffset(start: string, days: number) {
+  const date = new Date(`${start}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 export default function PayrollClient({ initialRows, initialEventSummaries, availableYears, initialYear, initialSummaryLoaded, initialError, initialDiagnostics = null }: Props) {
+  const [forecastBasis, setForecastBasis] = useState<ForecastBasis>("last-worked");
+  const [forecastDueBy, setForecastDueBy] = useState("");
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [forecastFailures, setForecastFailures] = useState<string[]>([]);
   const [rows, setRows] = useState(initialRows);
   const [eventSummaries, setEventSummaries] = useState<PayrollEventSummary[]>(initialEventSummaries);
   const [year, setYear] = useState(initialYear);
@@ -963,6 +1037,44 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
   const payableTotal = Math.round((paidTotal + unpaidTotal) * 100) / 100;
   const loadedEventCount = useMemo(() => summaryEvents.filter((event) => loadedDetailShowIds.has(event.showId)).length, [summaryEvents, loadedDetailShowIds]);
   const savedSnapshotCount = useMemo(() => summaryEvents.filter((event) => event.payrollSnapshotStatus === "saved").length, [summaryEvents]);
+  const forecastEvents = useMemo(() => summaryEvents.filter((event) => loadedDetailShowIds.has(event.showId)), [summaryEvents, loadedDetailShowIds]);
+  const forecastEntries = useMemo(() => forecastEntriesForEvents(forecastEvents, forecastBasis), [forecastEvents, forecastBasis]);
+  const forecastToday = todayKey();
+  const forecastTotals = useMemo(() => {
+    const eligible = forecastEntries.filter((entry) => entry.date);
+    const sum = (list: ForecastEntry[]) => Math.round(list.reduce((total, entry) => total + entry.amount, 0) * 100) / 100;
+    return {
+      overdue: sum(eligible.filter((entry) => entry.date! < forecastToday)),
+      seven: sum(eligible.filter((entry) => entry.date! >= forecastToday && entry.date! <= dateOffset(forecastToday, 7))),
+      fourteen: sum(eligible.filter((entry) => entry.date! >= forecastToday && entry.date! <= dateOffset(forecastToday, 14))),
+      thirty: sum(eligible.filter((entry) => entry.date! >= forecastToday && entry.date! <= dateOffset(forecastToday, 30))),
+      outstanding: sum(forecastEntries),
+      undated: sum(forecastEntries.filter((entry) => !entry.date)),
+      dueBy: forecastDueBy ? sum(eligible.filter((entry) => entry.date! <= forecastDueBy)) : null,
+    };
+  }, [forecastEntries, forecastToday, forecastDueBy]);
+  const forecastComplete = loadedYears.has(year) && summaryEvents.every((event) => loadedDetailShowIds.has(event.showId)) && forecastFailures.length === 0;
+
+  async function loadForecastDetails() {
+    if (forecastLoading) return;
+    const missing = summaryEvents.filter((event) => !loadedDetailShowIds.has(event.showId));
+    if (!missing.length) { setForecastFailures([]); return; }
+    setForecastLoading(true);
+    const failures: string[] = [];
+    const queue = [...missing];
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
+        while (queue.length) {
+          const event = queue.shift();
+          if (!event) return;
+          try { await fetchAndStorePayrollEventDetails(event.showId, year, { suppressMessage: true }); }
+          catch (error) { failures.push(`${event.showName}: ${error instanceof Error ? error.message : "Load failed"}`); }
+        }
+      }));
+      setForecastFailures(failures);
+      setMessage(failures.length ? `Forecast detail incomplete: ${failures.slice(0, 3).join(" | ")}` : "Payment forecast details loaded.");
+    } finally { setForecastLoading(false); }
+  }
   const summaryRequestCompleted = loadedYears.has(year);
   const currentYearError = yearErrors[year] || "";
   const currentLoadProgress = yearLoadProgress[year] || null;
@@ -1592,11 +1704,18 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
     setSendingPurchaseOrderShowId(event.showId);
     setMessage(`Preparing ${targets.length} Purchase Order${targets.length === 1 ? "" : "s"}…`);
     try {
-      for (const row of targets) await savePurchaseOrder(row, true);
+      const savedVersions: Array<{ crew_id: string; revision: number; updated_at: string }> = [];
+      for (const row of targets) {
+        const saved = await savePurchaseOrder(row, true);
+        if (!saved || !Number.isInteger(saved.revision) || !saved.updatedAt) {
+          throw new Error(`${row.crewName}: latest Purchase Order revision could not be saved and verified. Nothing was sent.`);
+        }
+        savedVersions.push({ crew_id: row.crewId, revision: saved.revision, updated_at: saved.updatedAt });
+      }
       const response = await fetch("/api/payroll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "send_purchase_orders", show_id: event.showId, crew_ids: targets.map((row) => row.crewId) }),
+        body: JSON.stringify({ action: "send_purchase_orders", show_id: event.showId, crew_ids: targets.map((row) => row.crewId), expected_versions: savedVersions }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok && !result.results) throw new Error(result.message || "Unable to send Purchase Orders.");
@@ -2475,6 +2594,37 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         </div>
       </section>
 
+      <section className="card" aria-label="Payroll payment forecast">
+        <div className="row" style={{ alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div><h2 style={{ marginBottom: 4 }}>Payroll Payment Forecast</h2><p className="muted small" style={{ margin: 0 }}>Unpaid technicians and coordinators · {year} · projected cash obligations</p></div>
+          <div className="toolbar">
+            <button type="button" className={forecastBasis === "last-worked" ? "primary" : "ghost"} onClick={() => setForecastBasis("last-worked")}>30 Days After Last Work</button>
+            <button type="button" className={forecastBasis === "scheduled" ? "primary" : "ghost"} onClick={() => setForecastBasis("scheduled")}>Scheduled Pay Date</button>
+          </div>
+        </div>
+        {!forecastComplete ? <div className="card compact" style={{ marginTop: 12, border: "1px solid #d97706" }}>
+          <strong>Partial forecast — do not rely on these totals yet.</strong>
+          <p className="muted small">Details loaded for {forecastEvents.length} of {summaryEvents.length} shows. Missing records are excluded, not treated as $0. {forecastFailures.length ? `${forecastFailures.length} show(s) failed to load.` : ""}</p>
+          <button className="ghost" type="button" disabled={forecastLoading || !summaryRequestCompleted} onClick={() => void loadForecastDetails()}>{forecastLoading ? "Loading details…" : "Load Forecast Details"}</button>
+        </div> : <p className="muted small" style={{ color: "#067647" }}>All {summaryEvents.length} shows loaded for this year.</p>}
+        <div className="grid grid-3" style={{ marginTop: 12 }}>
+          {([{ name: "Overdue", value: forecastTotals.overdue }, { name: "Next 7 days", value: forecastTotals.seven }, { name: "Next 14 days", value: forecastTotals.fourteen }, { name: "Next 30 days", value: forecastTotals.thirty }, { name: "Total outstanding", value: forecastTotals.outstanding }, { name: "Needs payment date", value: forecastTotals.undated }]).map((item) => (
+            <div className="card compact" key={item.name}><div className="muted small">{item.name}</div><div style={{ fontWeight: 800, fontSize: 23 }}>{money(item.value)}</div></div>
+          ))}
+        </div>
+        <div className="row" style={{ marginTop: 12, alignItems: "end", gap: 12 }}>
+          <label className="field">Total due by date<input type="date" value={forecastDueBy} onChange={(event) => setForecastDueBy(event.target.value)} /></label>
+          {forecastDueBy ? <div><div className="muted small">Including overdue through {formatPayrollDate(forecastDueBy)}</div><strong>{money(forecastTotals.dueBy ?? 0)}</strong></div> : null}
+        </div>
+        <div className="mobile-table" style={{ overflowX: "auto", maxHeight: 440, marginTop: 12 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr><th>Due date</th><th>Event</th><th>Payee</th><th>Type</th><th style={{ textAlign: "right" }}>Outstanding</th></tr></thead>
+            <tbody>{[...forecastEntries].sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999") || a.showName.localeCompare(b.showName)).map((entry) => (
+              <tr key={entry.key}><td>{entry.date ? formatPayrollDate(entry.date) : "Needs date"}</td><td>{entry.showName}</td><td>{entry.payee}</td><td>{entry.kind}</td><td style={{ textAlign: "right" }}>{money(entry.amount)}</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+        <p className="muted small">The 7/14/30-day ranges are cumulative from today, excluding overdue amounts shown separately. The 30-day view is a projection only and never changes saved scheduled payment dates. If a coordinator or contractor has a separate payment agreement, that agreement controls.</p>
+      </section>
       {taxCenterOpen ? (
         <>
           <section className="card">
@@ -3188,12 +3338,14 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                                 {row.purchaseOrder?.changeRequest ? <p className="error" style={{ margin: "8px 0" }}><strong>Contractor requested:</strong> {row.purchaseOrder.changeRequest}</p> : null}
                                 <div className="grid grid-2" style={{ marginTop: 10 }}>
                                   <div className="field"><span>Current status</span><strong>{purchaseOrderStatusLabel(row.purchaseOrder?.status)}</strong>{row.purchaseOrder ? <span className="small muted">{purchaseOrderDisplayNumber(row.purchaseOrder) || "Reference assigned when saved"}</span> : <span className="small muted">Reference assigned when saved</span>}{row.purchaseOrder?.approvalDueAt ? <span className="small muted">Due {new Date(row.purchaseOrder.approvalDueAt).toLocaleString()}</span> : null}</div>
-                                  <div className="field"><span>Default day pay</span><strong>{money(poDraft.days.reduce((sum, day) => sum + poDraftNumber(day.defaultAmount), 0))}</strong><span className="small muted">The sum of the scheduled day lines below.</span></div>
+                                  <div className="field"><span>Regular / day pay</span><strong>{money(poDraft.days.reduce((sum, day) => sum + (day.payMode === "hourly" ? poDraftNumber(day.regularHours) * poDraftNumber(day.regularRate) : poDraftNumber(day.defaultAmount)), 0))}</strong><span className="small muted">The sum of the scheduled day lines below.</span></div>
                                   {poDraft.days.length ? <div style={{ gridColumn: "1 / -1", display: "grid", gap: 10 }}>
                                     {poDraft.days.map((day) => <div key={day.key} style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12, background: "#f8fafc" }}>
-                                      <div className="row" style={{ alignItems: "flex-start", marginBottom: 10 }}><div><strong>{formatPayrollDate(day.laborDate) || "Scheduled day"}</strong><div className="small muted">{day.description}</div></div><span className="badge">{money(poDraftNumber(day.defaultAmount) + poDraftNumber(day.overtimeHours) * poDraftNumber(day.overtimeRate) + poDraftNumber(day.doubleTimeHours) * poDraftNumber(day.doubleTimeRate))}</span></div>
+                                      <div className="row" style={{ alignItems: "flex-start", marginBottom: 10 }}><div><strong>{formatPayrollDate(day.laborDate) || "Scheduled day"}</strong><div className="small muted">{day.description}</div></div><span className="badge">{money((day.payMode === "hourly" ? poDraftNumber(day.regularHours) * poDraftNumber(day.regularRate) : poDraftNumber(day.defaultAmount)) + poDraftNumber(day.overtimeHours) * poDraftNumber(day.overtimeRate) + poDraftNumber(day.doubleTimeHours) * poDraftNumber(day.doubleTimeRate))}</span></div>
                                       <div className="grid grid-2">
-                                        <div className="field"><span>Default day pay</span><strong>{money(poDraftNumber(day.calculatedDefaultAmount))}</strong><span className="small muted">From the role rate shown in Events, including any individual rate saved on this assignment.</span></div>
+                                        <div className="field"><span>Scheduled (from Events, informational)</span><strong>{day.scheduledTime || "Not recorded"} · {day.scheduledHours || "0"} hours</strong></div>
+                                        <label className="field">Pay method<select value={day.payMode} onChange={(event) => updatePurchaseOrderDayDraft(row, day.key, { payMode: event.target.value as "day" | "hourly" })}><option value="day">Day amount</option><option value="hourly">Hourly</option></select></label>
+                                        {day.payMode === "hourly" ? <><label className="field">Regular hours<input inputMode="decimal" value={day.regularHours} onChange={(event) => updatePurchaseOrderDayDraft(row, day.key, { regularHours: sanitizeCurrencyInput(event.target.value) })} /></label><label className="field">Regular hourly rate<input inputMode="decimal" value={day.regularRate} onChange={(event) => updatePurchaseOrderDayDraft(row, day.key, { regularRate: sanitizeCurrencyInput(event.target.value) })} /></label></> : <label className="field">Default day pay<input inputMode="decimal" value={day.defaultAmount} onChange={(event) => updatePurchaseOrderDayDraft(row, day.key, { defaultAmount: sanitizeCurrencyInput(event.target.value) })} />{poDraftNumber(day.defaultAmount) !== poDraftNumber(day.calculatedDefaultAmount) ? <button className="ghost" type="button" style={{ marginTop: 6 }} onClick={() => updatePurchaseOrderDayDraft(row, day.key, { defaultAmount: day.calculatedDefaultAmount })}>Use current crew rate {money(poDraftNumber(day.calculatedDefaultAmount))}</button> : <span className="small muted">Matches the current crew-pay rate.</span>}</label>}
                                         <div className="field"><span>Day</span><strong>{formatPayrollDate(day.laborDate)}</strong></div>
                                         <label className="field">Overtime hours<input inputMode="decimal" value={day.overtimeHours} onChange={(event) => updatePurchaseOrderDayDraft(row, day.key, { overtimeHours: sanitizeCurrencyInput(event.target.value) })} /><span className="small muted">Defaults to every hour after 10 at 1.5×, including hours after 12.</span></label>
                                         <label className="field">Overtime hourly rate<input inputMode="decimal" value={day.overtimeRate} onChange={(event) => updatePurchaseOrderDayDraft(row, day.key, { overtimeRate: sanitizeCurrencyInput(event.target.value) })} /></label>

@@ -88,7 +88,7 @@ function purchaseOrderLines(po: ContractorPurchaseOrder) {
     const dayAmounts = purchaseOrderDayAmounts(day);
     const date = formatPayrollDate(day.laborDate) || "Scheduled day";
     return [
-      { label: `${date} — Default day pay`, detail: [day.description, day.note ? `Day note: ${day.note}` : ""].filter(Boolean).join(" · "), amount: dayAmounts.defaultAmount },
+      { label: `${date} — ${day.payMode === "hourly" ? "Regular hours" : "Day pay"}`, detail: [day.scheduledTime ? `Scheduled ${day.scheduledTime} (${day.scheduledHours ?? 0} hr)` : day.scheduledHours !== undefined ? `Scheduled ${day.scheduledHours} hr` : "", day.payMode === "hourly" ? `${day.regularHours ?? 0} regular hr × ${money(day.regularRate ?? 0)}` : "", day.description, day.note ? `Day note: ${day.note}` : ""].filter(Boolean).join(" · "), amount: dayAmounts.defaultAmount },
       dayAmounts.overtime > 0 ? { label: `${date} — Overtime`, detail: `${day.overtimeHours} hr × ${money(day.overtimeRate)}`, amount: dayAmounts.overtime } : null,
       dayAmounts.doubleTime > 0 ? { label: `${date} — Double time`, detail: `${day.doubleTimeHours} hr × ${money(day.doubleTimeRate)}`, amount: dayAmounts.doubleTime } : null,
     ];
@@ -668,6 +668,23 @@ export async function POST(request: Request) {
       if (crewResult.error) throw crewResult.error;
       const show = showResult.data as { name?: string | null; client?: string | null; venue?: string | null; show_start?: string | null; show_end?: string | null };
       const crewById = new Map(((crewResult.data || []) as Array<{ id: string; name?: string | null; email?: string | null }>).map((crew) => [crew.id, crew]));
+      const versions = Array.isArray(body.expected_versions) ? body.expected_versions : [];
+      const expectedVersions = new Map<string, { revision: number; updated_at: string }>();
+      for (const value of versions) {
+        if (!value || typeof value !== "object") continue;
+        const entry = value as { crew_id?: unknown; revision?: unknown; updated_at?: unknown };
+        const id = safeText(entry.crew_id);
+        if (id) expectedVersions.set(id, { revision: Number(entry.revision), updated_at: safeText(entry.updated_at) });
+      }
+      // All selected POs must match their just-saved version before sending even one email.
+      if (expectedVersions.size !== crewIds.length) return NextResponse.json({ message: "Each Purchase Order must be saved and version-verified before sending." }, { status: 409 });
+      for (const crewId of crewIds) {
+        const saved = extractPurchaseOrderFromNotes(safeText((await existingPayrollRow(admin, showId, crewId))?.notes));
+        const expected = expectedVersions.get(crewId);
+        if (!saved || !expected || saved.revision !== expected.revision || saved.updatedAt !== expected.updated_at) {
+          return NextResponse.json({ message: "Purchase Order changed or was not saved successfully. No emails were sent. Refresh and retry." }, { status: 409 });
+        }
+      }
       const origin = new URL(request.url).origin;
       const results: Array<{ crew_id: string; ok: boolean; message: string; purchase_order?: ContractorPurchaseOrder }> = [];
       for (const crewId of crewIds) {
@@ -675,6 +692,11 @@ export async function POST(request: Request) {
         const currentRow = await existingPayrollRow(admin, showId, crewId);
         const currentNotes = safeText(currentRow?.notes);
         const existing = extractPurchaseOrderFromNotes(currentNotes);
+        const expected = expectedVersions.get(crewId);
+        if (existing && (!expected || existing.revision !== expected.revision || existing.updatedAt !== expected.updated_at)) {
+          results.push({ crew_id: crewId, ok: false, message: "Purchase Order was changed since saving; not sent." });
+          continue;
+        }
         if (!existing) {
           results.push({ crew_id: crewId, ok: false, message: "Save this contractor's Purchase Order before sending." });
           continue;

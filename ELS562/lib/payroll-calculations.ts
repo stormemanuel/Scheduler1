@@ -42,6 +42,11 @@ export type PurchaseOrderDayLine = {
   description: string;
   note: string;
   defaultAmount: number;
+  payMode?: "day" | "hourly";
+  regularHours?: number;
+  regularRate?: number;
+  scheduledHours?: number;
+  scheduledTime?: string;
   overtimeHours: number;
   overtimeRate: number;
   doubleTimeHours: number;
@@ -95,7 +100,12 @@ export function normalizePurchaseOrderDays(value: unknown): PurchaseOrderDayLine
       laborDate,
       description: String(day.description || "").trim().slice(0, 240),
       note: String(day.note || "").trim().slice(0, 1000),
-      defaultAmount: poNumber(day.defaultAmount),
+      defaultAmount: day.payMode === "hourly" ? Math.round(poNumber(day.regularHours) * poNumber(day.regularRate) * 100) / 100 : poNumber(day.defaultAmount),
+      payMode: day.payMode === "hourly" ? "hourly" : "day",
+      regularHours: poNumber(day.regularHours),
+      regularRate: poNumber(day.regularRate),
+      scheduledHours: poNumber(day.scheduledHours),
+      scheduledTime: String(day.scheduledTime || "").slice(0, 140),
       overtimeHours: poNumber(day.overtimeHours),
       overtimeRate: poNumber(day.overtimeRate),
       doubleTimeHours: poNumber(day.doubleTimeHours),

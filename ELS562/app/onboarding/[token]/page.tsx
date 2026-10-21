@@ -19,6 +19,8 @@ type PublicPurchaseOrder = {
   days: Array<{
     key: string; laborDate: string; description: string; defaultAmount: number;
     note: string;
+    payMode?: "day" | "hourly";
+    regularHours?: number; regularRate?: number; scheduledHours?: number; scheduledTime?: string;
     overtimeHours: number; overtimeRate: number; doubleTimeHours: number; doubleTimeRate: number;
   }>;
   adjustments: {
@@ -2301,7 +2303,7 @@ export default function OnboardingPage({ params }: PageProps) {
       const doubleTime = Math.round(day.doubleTimeHours * day.doubleTimeRate * 100) / 100;
       const date = poDate(day.laborDate);
       return [
-        { label: `${date} — Default day pay`, detail: [day.description, day.note ? `Day note: ${day.note}` : ""].filter(Boolean).join(" · "), amount: day.defaultAmount },
+        { label: `${date} — ${day.payMode === "hourly" ? "Regular hours" : "Day pay"}`, detail: [day.scheduledTime ? `Scheduled ${day.scheduledTime} (${day.scheduledHours ?? 0} hr)` : day.scheduledHours !== undefined ? `Scheduled ${day.scheduledHours} hr` : "", day.payMode === "hourly" ? `${day.regularHours ?? 0} regular hr × ${poMoney(day.regularRate ?? 0)}` : "", day.description, day.note ? `Day note: ${day.note}` : ""].filter(Boolean).join(" · "), amount: day.defaultAmount },
         overtime > 0 ? { label: `${date} — Overtime`, detail: `${day.overtimeHours} hr × ${poMoney(day.overtimeRate)}`, amount: overtime } : null,
         doubleTime > 0 ? { label: `${date} — Double time`, detail: `${day.doubleTimeHours} hr × ${poMoney(day.doubleTimeRate)}`, amount: doubleTime } : null,
       ];
