@@ -2117,21 +2117,21 @@ async function queueAvailabilityCandidates(
   user: { id: string; email?: string | null; display_name?: string | null },
 ) {
   const showId = safeText(body.show_id || (body.settings as Record<string, unknown> | undefined)?.show_id);
-  const crewIds: string[] = cleanQueueIds(body.crew_ids, 250);
+  const crewIds: string[] = cleanQueueIds(body.crew_ids, Number.POSITIVE_INFINITY);
   const template = safeText(body.body);
   if (!showId) throw new Error("show_id is required.");
   if (!crewIds.length) throw new Error("Select at least one crew member first.");
+  if (crewIds.length > 500) throw new Error("Select at most 500 crew members per availability batch. No messages queued.");
   if (!template) throw new Error("Enter the availability message first.");
 
   const [showRes, crewRes] = await Promise.all([
     admin.from("shows").select("id, name, show_reference_number, venue, event_location, rate_city, show_start, show_end").eq("id", showId).single(),
-    admin.from("crew").select("id, name, phone").in("id", crewIds),
+    readAvailabilityRows<{ id: string; name: string | null; phone: string | null }>(admin, "crew", "id, name, phone", "id", crewIds),
   ]);
   if (showRes.error || !showRes.data) throw new Error(showRes.error?.message || "Show not found.");
-  if (crewRes.error) throw new Error(crewRes.error.message);
 
   const show = showRes.data as ShowRow;
-  const crewById = new Map(((crewRes.data || []) as Array<{ id: string; name: string | null; phone: string | null }>).map((crew) => [crew.id, crew]));
+  const crewById = new Map(crewRes.map((crew) => [crew.id, crew]));
   const senderName = senderNameForMessage(user);
   // Never trust client-supplied dates/times for either conflict checks or messages.
   const callIds = cleanQueueIds(body.sub_call_ids, 250);

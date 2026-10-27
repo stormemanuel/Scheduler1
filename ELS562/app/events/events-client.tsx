@@ -12231,7 +12231,7 @@ function EventsClientInner({
 
   function renderAutomationPanel() {
     if (!selectedShow) return null;
-    const displayedAvailabilityCandidates = availabilityCandidates.slice(0, 150);
+    const displayedAvailabilityCandidates = availabilityCandidates;
     const displayedAvailabilityIds = displayedAvailabilityCandidates.map((item) => item.crew.id);
     const selectedAvailabilitySet = new Set(selectedAvailabilityCrewIds);
     const scheduledRows = selectedTextQueue.filter((row) => ACTIVE_TEXT_QUEUE_STATUSES.has(normalize(row.status)));
