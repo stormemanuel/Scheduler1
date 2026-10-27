@@ -868,7 +868,7 @@ function normalizeScheduleTemplate(value: unknown) {
 const defaultAvailabilityTemplate = "Hello {first_name}, are you available for {show_reference}?\n\nPosition: {position}\nArea: {area}\nVenue: {venue_or_location}\nRate: {rate}\n\nChecking availability for these dates:\n{availability_schedule}\n\nI have some days in between that range that I am booking.\n\nPlease respond ASAP, as the positions are filled quickly.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services.";
 const scheduleHeader = "Emanuel Labor Services Labor Call";
 const scheduleDateDisclaimer = "Dates and times are subject to change.";
-const updatedScheduleNotice = "*****SCHEDULE UPDATED PLEASE CONFIRM CHANGES*****";
+const updatedScheduleNotice = "*****UPDATED SCHEDULE PLEASE CONFIRM CHANGES*****";
 const scheduleLateHourlyDisclaimer = "If anyone is 15 minutes late or more, that shift will be paid hourly.";
 const onSiteReplacementSummary = "On-site Replacement: You must be onsite and at the listed meet-up location on time, ready to work. If you are not used, you will receive a flat $50 show-up payment. If you are used to replace a scheduled crew member, the $50 show-up payment is waived and you will be paid the rate for the shift and position you work.";
 const defaultScheduleTemplate = `Hi {first_name} – {show_name} @ {venue}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\n{booth_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`;
@@ -876,11 +876,19 @@ const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_n
 const defaultDayOfReminderTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nSee you soon. Please confirm.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 const defaultDailyAfterFirstDayTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 
+function isUpdatedScheduleMessage(body: string, reminderKey = "") {
+  // Notices sit below the header. Accept the former wording for queued texts,
+  // and recover dedicated updated schedules whose body was already refreshed.
+  return /^\s*\*{5}(?:UPDATED SCHEDULE|SCHEDULE UPDATED) PLEASE CONFIRM CHANGES\*{5}\s*$/im.test(body)
+    || /(?:^|:)full_show_schedule_update_/.test(reminderKey);
+}
+
 function prependUpdatedScheduleNotice(value: string) {
   const text = ensureScheduleHeader(safeText(value));
   if (!text) return text;
-  const body = text.slice(scheduleHeader.length).trimStart();
-  if (body.toUpperCase().startsWith(updatedScheduleNotice)) return text;
+  const body = text.slice(scheduleHeader.length)
+    .replace(/^\s*\*{5}(?:UPDATED SCHEDULE|SCHEDULE UPDATED) PLEASE CONFIRM CHANGES\*{5}\s*$/gim, "")
+    .trim();
   return `${scheduleHeader}\n\n${updatedScheduleNotice}\n\n${body}`;
 }
 
@@ -2392,7 +2400,7 @@ function scheduleEmailSubject(row: QueueRow, show: { name?: string | null; show_
   const showLabel = safeText(show?.show_reference_number) || safeText(show?.name) || "ELS Event";
   const key = safeText(row.reminder_key).toLowerCase();
   const body = safeText(row.body);
-  if (key.includes("update") || body.startsWith("*****SCHEDULE UPDATED PLEASE CONFIRM CHANGES*****")) return `ELS Updated Schedule — ${showLabel}`;
+  if (key.includes("update") || isUpdatedScheduleMessage(body, key)) return `ELS Updated Schedule — ${showLabel}`;
   if (safeText(row.message_type).toLowerCase() === "schedule") return `ELS Schedule — ${showLabel}`;
   return `ELS Reminder — ${showLabel}`;
 }
@@ -2647,7 +2655,7 @@ export async function revalidateActiveEventMessageQueue(
         const item = scheduleBySender.get(senderName)?.get(crewId);
         if (item) {
           nextBody = ensureScheduleHeader(ensureSenderIdentity(applyTemplate(settings.schedule_template || defaultScheduleTemplate, item.values), senderName), item.values.client);
-          if (safeText(queued.body).startsWith("*****SCHEDULE UPDATED PLEASE CONFIRM CHANGES*****")) nextBody = prependUpdatedScheduleNotice(nextBody);
+          if (isUpdatedScheduleMessage(safeText(queued.body), safeText(queued.reminder_key))) nextBody = prependUpdatedScheduleNotice(nextBody);
         }
       } else {
         // Custom reminder keys are not rewritten, but they still pass the live

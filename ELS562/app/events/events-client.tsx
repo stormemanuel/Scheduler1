@@ -12866,7 +12866,7 @@ function EventsClientInner({
                 </label>
                 <label className="row small" style={{ alignItems: "flex-start", justifyContent: "flex-start" }}>
                   <input type="checkbox" checked={resendSentSchedules} onChange={(event) => setResendSentSchedules(event.target.checked)} />
-                  <span><strong>Resend updated schedules already marked sent</strong><span className="muted" style={{ display: "block" }}>Adds *****SCHEDULE UPDATED PLEASE CONFIRM CHANGES***** at the top. Use after changing days, area, sub-call, time, or rate. Default off to avoid accidental duplicate texts.</span></span>
+                  <span><strong>Resend updated schedules already marked sent</strong><span className="muted" style={{ display: "block" }}>Adds *****UPDATED SCHEDULE PLEASE CONFIRM CHANGES***** below the company heading. Use after changing days, area, sub-call, time, or rate. Default off to avoid accidental duplicate texts.</span></span>
                 </label>
               </div>
               {combinedScheduleSummary ? (
@@ -12876,7 +12876,7 @@ function EventsClientInner({
                     <div>{combinedScheduleSummary.schedules_now} full-show schedule{combinedScheduleSummary.schedules_now === 1 ? "" : "s"} will {automationDraft.sending_method === "resend_email" ? "send now by email through Resend" : "be queued now"}.</div>
                     <div>{combinedScheduleSummary.future} future reminder{combinedScheduleSummary.future === 1 ? "" : "s"} will be scheduled.</div>
                     {combinedScheduleSummary.previously_cancelled ? <div>{combinedScheduleSummary.previously_cancelled} previously cancelled item{combinedScheduleSummary.previously_cancelled === 1 ? "" : "s"} will be requeued from current event data.</div> : null}
-                    {resendSentSchedules ? <div>Updated schedule resends will include *****SCHEDULE UPDATED PLEASE CONFIRM CHANGES***** at the top.</div> : null}
+                    {resendSentSchedules ? <div>Updated schedule resends will include *****UPDATED SCHEDULE PLEASE CONFIRM CHANGES***** below the company heading.</div> : null}
                     <div>{combinedScheduleSummary.duplicate_skip} already queued/sent item{combinedScheduleSummary.duplicate_skip === 1 ? "" : "s"} will be skipped.</div>
                     <div>{combinedScheduleSummary.overdue} overdue reminder{combinedScheduleSummary.overdue === 1 ? "" : "s"} found.</div>
                     <div>{combinedScheduleSummary.crew_members} crew member{combinedScheduleSummary.crew_members === 1 ? "" : "s"} affected.</div>
@@ -13005,7 +13005,7 @@ function EventsClientInner({
               <div className="row" style={{ alignItems: "flex-start" }}>
                 <div>
                   <strong>Send updated schedule to selected techs</strong>
-                  <div className="small muted">Use this when only certain techs had a schedule change. Selected techs receive the current full-show schedule with *****SCHEDULE UPDATED PLEASE CONFIRM CHANGES***** at the top.</div>
+                  <div className="small muted">Use this when only certain techs had a schedule change. Selected techs receive the current full-show schedule with *****UPDATED SCHEDULE PLEASE CONFIRM CHANGES***** below the company heading.</div>
                 </div>
                 <span className="badge">{selectedUpdatedScheduleCrewIds.length} selected</span>
               </div>
