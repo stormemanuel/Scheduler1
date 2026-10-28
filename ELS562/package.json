@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "test:availability": "node tests/availability-client.cjs && node tests/availability-server.cjs",
-    "test:updated-schedules": "node tests/updated-schedule.cjs"
+    "test:updated-schedules": "node tests/updated-schedule.cjs",
+    "test:crew-ratings": "node tests/crew-ratings.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.5.2",

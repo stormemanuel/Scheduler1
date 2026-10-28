@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, Fragment, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import CrewRatings from "./crew-ratings";
 import { useRouter } from "next/navigation";
 import { normalizePhoneForStorage, phoneDigitsForMatch } from "@/lib/crew-types";
 import type { CityPoolRecord, CrewGroupRecord, CrewRecord, PositionInput } from "@/lib/crew-types";
@@ -220,7 +221,7 @@ async function createAdminCroppedProfileFile(crop: AdminProfileCropState) {
   });
 }
 
-type DetailTab = "info" | "roles" | "availability" | "onboarding" | "notes" | "move";
+type DetailTab = "ratings" | "info" | "roles" | "availability" | "onboarding" | "notes" | "move";
 
 const ALL_GROUPS = "__all_groups__";
 const UNASSIGNED_CITY = "__unassigned_city__";
@@ -1307,7 +1308,7 @@ export default function CrewClient({ cityPools: initialCityPools, crewGroups: in
   const [cityPools, setCityPools] = useState(initialCityPools);
   const [crewGroups, setCrewGroups] = useState(initialGroups);
   const [crewRecords, setCrewRecords] = useState(initialCrew);
-  const [ratings] = useState(initialRatings);
+  const [ratings, setRatings] = useState(initialRatings);
   const ratingSummaryByCrew = useMemo(() => {
     const map = new Map<string, { values: number[]; lastRatingAt: string }>();
     for (const rating of ratings) {
@@ -3637,6 +3638,7 @@ export default function CrewClient({ cityPools: initialCityPools, crewGroups: in
                           <ContactDetail
                             record={record}
                             ratingSummary={ratingSummaryByCrew.get(record.id) || null}
+                            onRatingSaved={(rating) => setRatings((current) => [...current.filter((row) => row.id !== rating.id), rating])}
                             cityPools={cityPoolsForDisplay}
                             targetGroups={targetGroupsForBulkCity}
                             bulkCityId={bulkCityId || record.city_pool_id || ""}
@@ -3749,6 +3751,7 @@ export default function CrewClient({ cityPools: initialCityPools, crewGroups: in
 type ContactDetailProps = {
   record: CrewRecord;
   ratingSummary: CrewRatingSummary | null;
+  onRatingSaved: (rating: TechRatingRecord) => void;
   cityPools: CityPoolRecord[];
   targetGroups: string[];
   bulkCityId: string;
@@ -3773,7 +3776,7 @@ type ContactDetailProps = {
   directAndroidOnboarding: boolean;
 };
 
-function ContactDetail({ record, ratingSummary, cityPools, targetGroups, bulkCityId, bulkGroupName, detailTab, onTab, onEdit, onDelete, onAcknowledgeCoordinatorHidden, onRestoreCoordinatorHidden, onMove, onQueueOnboarding, onQueueW9Only, onQueueContractOnly, onQueueProfilePhotoOnly, onAdminDocumentUploaded, onBulkCityChange, onBulkGroupChange, saving, canSeeAdminAudit, canSendOnboarding, directAndroidOnboarding }: ContactDetailProps) {
+function ContactDetail({ record, ratingSummary, onRatingSaved, cityPools, targetGroups, bulkCityId, bulkGroupName, detailTab, onTab, onEdit, onDelete, onAcknowledgeCoordinatorHidden, onRestoreCoordinatorHidden, onMove, onQueueOnboarding, onQueueW9Only, onQueueContractOnly, onQueueProfilePhotoOnly, onAdminDocumentUploaded, onBulkCityChange, onBulkGroupChange, saving, canSeeAdminAudit, canSendOnboarding, directAndroidOnboarding }: ContactDetailProps) {
   const phoneHref = record.phone ? `tel:${record.phone.replace(/[^0-9+]/g, "")}` : undefined;
   const smsHref = record.phone ? `sms:${record.phone.replace(/[^0-9+]/g, "")}` : undefined;
   const emailHref = record.email ? `mailto:${record.email}` : undefined;
@@ -4481,12 +4484,14 @@ function ContactDetail({ record, ratingSummary, cityPools, targetGroups, bulkCit
       })() : null}
 
       <div className="toolbar" style={{ marginBottom: 14 }}>
-        {(["info", "roles", "availability", ...(canSendOnboarding ? ["onboarding" as const] : []), "notes", "move"] as DetailTab[]).map((tab) => (
+        {(["info", "ratings", "roles", "availability", ...(canSendOnboarding ? ["onboarding" as const] : []), "notes", "move"] as DetailTab[]).map((tab) => (
           <button key={tab} className={detailTab === tab ? "primary" : "ghost"} type="button" onClick={() => onTab(tab)}>
-            {tab === "info" ? "Info" : tab === "roles" ? "Roles & rates" : tab === "availability" ? "Availability" : tab === "onboarding" ? "Onboarding" : tab === "notes" ? "Notes" : "Move"}
+            {tab === "info" ? "Info" : tab === "ratings" ? "Ratings" : tab === "roles" ? "Roles & rates" : tab === "availability" ? "Availability" : tab === "onboarding" ? "Onboarding" : tab === "notes" ? "Notes" : "Move"}
           </button>
         ))}
       </div>
+
+      {detailTab === "ratings" ? <CrewRatings key={record.id} crewId={record.id} onSaved={onRatingSaved} /> : null}
 
       {detailTab === "info" ? (
         <div className="list">
