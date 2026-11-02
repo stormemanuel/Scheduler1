@@ -2815,7 +2815,7 @@ async function resendDeliveryEvent(emailId: string) {
   return safeText(result.last_event).toLowerCase();
 }
 
-async function sendPurchaseOrderReminderEmail(args: { to: string; name: string; showName: string; displayNumber: string; total: number; link: string; dueAt: string }) {
+async function sendPurchaseOrderReminderEmail(args: { to: string; name: string; showName: string; displayNumber: string; total: number; link: string; dueAt: string; paymentTermsDays?: 15 | 30 }) {
   const key = resendApiKey();
   const domain = resendEmailDomain();
   if (!key || !domain || !validEmail(args.to)) throw new Error("Purchase Order reminder email is not configured or the contractor email is invalid.");
@@ -2827,7 +2827,7 @@ async function sendPurchaseOrderReminderEmail(args: { to: string; name: string; 
     body: JSON.stringify({
       from: `Emanuel Labor Services <payroll@${domain}>`, reply_to: `info@${domain}`, to: [args.to],
       subject: `Reminder: review Purchase Order${reference} for ${args.showName}`,
-      text: `Hello ${args.name},\n\nYour Purchase Order${reference} for ${args.showName} is still awaiting your approval or change request. Total: ${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(args.total)}. Please respond by ${due}. If no response is received within 48 hours of delivery, it will be recorded as approved. Payment terms are Net 30. The approved amount will be scheduled for payment within 30 days.\n\nReview: ${args.link}`,
+      text: `Hello ${args.name},\n\nYour Purchase Order${reference} for ${args.showName} is still awaiting your approval or change request. Total: ${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(args.total)}. Please respond by ${due}. If no response is received within 48 hours of delivery, it will be recorded as approved. Payment terms are Net ${args.paymentTermsDays || 30}. The approved amount will be scheduled for payment within ${args.paymentTermsDays || 30} days.\n\nReview: ${args.link}`,
     }),
   });
   if (!response.ok) throw new Error(`Purchase Order reminder returned HTTP ${response.status}.`);
@@ -2871,7 +2871,7 @@ async function processPurchaseOrderAutomation(admin: NonNullable<ReturnType<type
       if (!po.reminderSentAt && now.getTime() >= deliveredMs + 24 * 60 * 60 * 1000) {
         const crew = crewById.get(row.crew_id);
         try {
-          await sendPurchaseOrderReminderEmail({ to: safeText(crew?.email), name: safeText(crew?.name) || "Contractor", showName: safeText(showById.get(row.show_id)?.name) || "your event", displayNumber: purchaseOrderDisplayNumber(po), total: po.total, link: `${origin}/onboarding/${encodeURIComponent(po.token)}?mode=purchase_order`, dueAt: po.approvalDueAt });
+          await sendPurchaseOrderReminderEmail({ to: safeText(crew?.email), name: safeText(crew?.name) || "Contractor", showName: safeText(showById.get(row.show_id)?.name) || "your event", displayNumber: purchaseOrderDisplayNumber(po), total: po.total, link: `${origin}/onboarding/${encodeURIComponent(po.token)}?mode=purchase_order`, dueAt: po.approvalDueAt, paymentTermsDays: po.paymentTermsDays || 30 });
           po = { ...po, reminderSentAt: at, updatedAt: at, audit: [...po.audit, { at, action: "24_hour_reminder_sent" }].slice(-60) };
           stats.reminded += 1;
         } catch (error) {

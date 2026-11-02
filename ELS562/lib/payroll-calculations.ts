@@ -61,6 +61,7 @@ export type PurchaseOrderAuditEvent = {
 
 export type ContractorPurchaseOrder = {
   version: 1;
+  paymentTermsDays?: 15 | 30;
   token: string;
   previousTokens?: string[];
   referenceNumber: string;

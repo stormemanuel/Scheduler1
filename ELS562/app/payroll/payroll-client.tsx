@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { isOwnerDrawPayee, isOwnerTechEvent, ownerNotesText, withOwnerTechEvent, applyOwnerPassThrough, ownerDrawTotalForEvent, paidOwnerDrawsForEvent } from "@/lib/owner-draws";
+
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import type { PayrollCrewShowRow, PayrollEventSummary, PayrollYearTechSummary, PayrollPaymentStatus, PayrollCoordinatorPaymentSummary, PayrollPerformanceDiagnostics } from "@/lib/payroll-types";
+import { payrollScheduledBy, mergePayrollPaymentState, addNetDays, lastPayrollWorkDate, validPayrollDate, type NetDays, type ScheduleMode } from "@/lib/payroll-scheduling";
 import type { PurchaseOrderAdjustments } from "@/lib/payroll-calculations";
 import type { ShowExpenseItemRecord } from "@/lib/financial-types";
 import { estimateCoordinatorCompensation, formatPayrollDate, formatPayrollTime, money, purchaseOrderDisplayNumber } from "@/lib/payroll-calculations";
@@ -25,6 +28,8 @@ type SavePayload = {
   payout_override: number | null;
   notes: string;
   scheduled_for: string | null;
+  payment_terms_days?: NetDays;
+  schedule_mode?: ScheduleMode;
 };
 
 type ReportView = "current" | "estimated";
@@ -618,7 +623,7 @@ function effectivePayoutOverride(row: PayrollCrewShowRow, draft?: PurchaseOrderD
 }
 
 function payable(row: PayrollCrewShowRow, draft?: PurchaseOrderDraft) {
-  return effectivePayoutOverride(row, draft) ?? row.estimatedTotal;
+  return row.ownerPassThroughAmount ?? effectivePayoutOverride(row, draft) ?? row.estimatedTotal;
 }
 
 function coordinatorPaymentsForEvent(event: PayrollEventSummary): PayrollCoordinatorPaymentSummary[] {
@@ -694,6 +699,7 @@ function coordinatorCostForEvent(event: Pick<PayrollEventSummary, "coordinatorPa
 }
 
 function buildEventSummaries(rows: PayrollCrewShowRow[]) {
+  rows = applyOwnerPassThrough(rows);
   const events = new Map<string, PayrollEventSummary>();
   for (const row of rows) {
     if (!events.has(row.showId)) {
@@ -746,10 +752,12 @@ function buildEventSummaries(rows: PayrollCrewShowRow[]) {
       const coordinatorCost = coordinatorCostForEvent({ coordinatorPayment, coordinatorPayments });
       const expenses = event.expenseItems.length ? expenseTotal(event.expenseItems) : Math.round(Number(event.expenses || 0) * 100) / 100;
       const revenue = Math.round(((event.revenueOverride ?? event.estimatedRevenue) || 0) * 100) / 100;
-      const profit = Math.round((revenue - event.payableTotal - coordinatorCost - expenses) * 100) / 100;
+      const ownerDrawTotal = ownerDrawTotalForEvent({ ...sortedEvent, coordinatorPayment, coordinatorPayments }, payable);
+      const profit = Math.round((revenue - event.payableTotal - coordinatorCost + ownerDrawTotal - expenses) * 100) / 100;
       const positiveProfit = Math.max(0, profit);
       return {
       ...sortedEvent,
+      ownerDrawTotal,
       coordinatorPayment,
       coordinatorPayments,
       estimatedRevenue: revenue,
@@ -771,6 +779,7 @@ function buildEventSummaries(rows: PayrollCrewShowRow[]) {
 function buildYearSummary(rows: PayrollCrewShowRow[]) {
   const byCrew = new Map<string, PayrollYearTechSummary>();
   for (const row of rows) {
+    if (isOwnerDrawPayee(row.crewName)) continue;
     if (!byCrew.has(row.crewId)) {
       byCrew.set(row.crewId, {
         crewId: row.crewId,
@@ -840,7 +849,7 @@ function viewLabel(view: ReportView) {
 function eventDefaultScheduledFor(event: PayrollEventSummary) {
   const savedDates = [...new Set(event.rows.map((row) => row.scheduledFor || "").filter(Boolean))];
   if (savedDates.length === 1) return savedDates[0];
-  return event.showEnd || event.showStart || todayKey();
+  return event.rows.map((row) => payrollScheduledBy(row)).filter((date): date is string => Boolean(date)).sort().at(-1) || addNetDays(event.showEnd || event.showStart || null, 30) || "";
 }
 
 function eventPayrollIsFullyPaid(event: PayrollEventSummary) {
@@ -857,7 +866,7 @@ function eventPayrollIsFullyPaid(event: PayrollEventSummary) {
 function plForEvents(events: PayrollEventSummary[]) {
   const totals = events.reduce((acc, event) => {
     acc.estimatedRevenue += event.estimatedRevenue;
-    acc.contractLabor += event.payableTotal + coordinatorCostForEvent(event);
+    acc.contractLabor += (event.payableTotal + coordinatorCostForEvent(event) - (event.ownerDrawTotal || 0));
     acc.expenses += event.expenses;
     acc.estimatedProfit += event.estimatedProfit;
     acc.consecratedHandsDonation += event.consecratedHandsDonation;
@@ -890,7 +899,7 @@ async function readPayrollResponse<T>(response: Response): Promise<T> {
 }
 
 type ForecastBasis = "last-worked" | "scheduled";
-type ForecastEntry = { key: string; showName: string; payee: string; kind: "Technician" | "Coordinator"; amount: number; date: string | null };
+type ForecastEntry = { key: string; showName: string; payee: string; kind: "Technician" | "Coordinator" | "Owner draw"; amount: number; date: string | null };
 
 function forecastDatePlus30(value: string | null | undefined): string | null {
   const date = String(value || "").slice(0, 10);
@@ -913,8 +922,8 @@ function forecastEntriesForEvents(events: PayrollEventSummary[], basis: Forecast
       if (paymentStatusFor(row) === "paid") continue;
       const amount = payable(row);
       if (!Number.isFinite(amount) || amount <= 0) continue;
-      result.push({ key: `crew:${row.key}`, showName: event.showName, payee: row.crewName, kind: "Technician", amount,
-        date: basis === "scheduled" ? row.scheduledFor || null : forecastDatePlus30(lastWorkedDateForRow(row)) });
+      result.push({ key: `crew:${row.key}`, showName: event.showName, payee: row.crewName, kind: isOwnerDrawPayee(row.crewName) ? "Owner draw" : "Technician", amount,
+        date: basis === "scheduled" ? payrollScheduledBy(row) : addNetDays(lastPayrollWorkDate(row), row.paymentTermsDays || 30) });
     }
     const coordinators = event.coordinatorPayments?.length ? event.coordinatorPayments : event.coordinatorPayment ? [event.coordinatorPayment] : [];
     const seen = new Set<string>();
@@ -926,7 +935,7 @@ function forecastEntriesForEvents(events: PayrollEventSummary[], basis: Forecast
       const amount = Number(coordinator.payableAmount);
       if (!Number.isFinite(amount) || amount <= 0) continue;
       const lastDate = event.rows.flatMap((row) => row.calls.map((call) => String(call.laborDate || "").slice(0, 10))).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort().at(-1) || event.showEnd;
-      result.push({ key: `coordinator:${event.showId}:${id}`, showName: event.showName, payee: coordinator.coordinatorName, kind: "Coordinator", amount,
+      result.push({ key: `coordinator:${event.showId}:${id}`, showName: event.showName, payee: coordinator.coordinatorName, kind: isOwnerDrawPayee(coordinator.coordinatorName) ? "Owner draw" : "Coordinator", amount,
         date: basis === "scheduled" ? coordinator.scheduledFor || null : forecastDatePlus30(lastDate) });
     }
   }
@@ -947,6 +956,12 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
   const [rows, setRows] = useState(initialRows);
   const [eventSummaries, setEventSummaries] = useState<PayrollEventSummary[]>(initialEventSummaries);
   const [year, setYear] = useState(initialYear);
+  const yearRequest = useRef(0);
+  const savedRows = useRef(new Map<string, PayrollCrewShowRow>());
+  const rowSaveQueues = useRef(new Map<string, Promise<boolean>>());
+  const [savingRowKeys, setSavingRowKeys] = useState<Set<string>>(new Set());
+  const [eventDateDrafts, setEventDateDrafts] = useState<Record<string, string>>({});
+  const [rowDateDrafts, setRowDateDrafts] = useState<Record<string, string>>({});
   const [loadedYears, setLoadedYears] = useState<Set<number>>(() => initialSummaryLoaded ? new Set([initialYear]) : new Set<number>());
   const [attemptedYears, setAttemptedYears] = useState<Set<number>>(() => initialError ? new Set([initialYear]) : new Set<number>());
   const [yearErrors, setYearErrors] = useState<Record<number, string>>(() => initialError ? { [initialYear]: initialError } : {});
@@ -990,7 +1005,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
   const [message, setMessage] = useState(initialError || "");
   const [diagnostics, setDiagnostics] = useState<PayrollPerformanceDiagnostics | null>(initialDiagnostics);
 
-  const yearRows = useMemo(() => rows.filter((row) => row.showYear === year), [rows, year]);
+  const yearRows = useMemo(() => applyOwnerPassThrough(rows.filter((row) => row.showYear === year)), [rows, year]);
   const yearEventSummaries = useMemo(() => eventSummaries.filter((event) => event.showYear === year), [eventSummaries, year]);
   const detailedEventById = useMemo(() => new Map(buildEventSummaries(yearRows).map((event) => [event.showId, event])), [yearRows]);
   const viewYearRows = useMemo(() => {
@@ -1102,14 +1117,21 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
   }), [required1099Summaries, reportingThreshold]);
 
   async function selectPayrollYear(nextYear: number, force = false) {
-    const previousYear = year;
+    const requestId = ++yearRequest.current;
     setYear(nextYear);
+    setYearOptions((current) => [...new Set([...current, nextYear])].sort((a, b) => b - a));
+    try {
+      window.localStorage.setItem("els-payroll-year", String(nextYear));
+      const url = new URL(window.location.href);
+      url.searchParams.set("year", String(nextYear));
+      window.history.replaceState(null, "", url);
+    } catch { /* Browsers may restrict local storage. The selected year still works. */ }
     setExpandedPaidEventIds(new Set());
     setPaidShowsOpen(true);
     setPaidShowsVisible(25);
     setTaxCenterOpen(false);
     setOpenRows(new Set());
-    if (loadedYears.has(nextYear) && !force) return;
+    if (loadedYears.has(nextYear) && !force) { setLoadingYear(null); return; }
 
     setLoadingYear(nextYear);
     setMessage(`Loading ${nextYear} Payroll dashboard…`);
@@ -1126,15 +1148,16 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         message?: string;
         diagnostics?: PayrollPerformanceDiagnostics;
       }>(indexResponse);
+      if (requestId !== yearRequest.current) return;
       if (!indexResponse.ok) throw new Error(indexResult.message || indexResult.error || `Unable to load ${nextYear} payroll show list (HTTP ${indexResponse.status}).`);
       if (indexResult.error) throw new Error(indexResult.error);
 
       const returnedYear = Number(indexResult.loadedYear ?? nextYear);
+      if (returnedYear !== nextYear) throw new Error("Payroll returned a different year. Please retry the selected year.");
       const showIndex = Array.isArray(indexResult.eventSummaries) ? indexResult.eventSummaries : [];
       setRows((current) => current.filter((row) => row.showYear !== returnedYear));
       setEventSummaries((current) => [...current.filter((event) => event.showYear !== returnedYear), ...showIndex]);
       setYearOptions((current) => [...new Set([...current, ...(indexResult.availableYears ?? []), returnedYear])].sort((a, b) => b - a));
-      setYear(returnedYear);
       setDiagnostics(indexResult.diagnostics ?? null);
       const showsNeedingLiveDetails = showIndex.filter((event) => !eventPayrollIsFullyPaid(event));
       setYearLoadProgress((current) => ({ ...current, [returnedYear]: { done: 0, total: showsNeedingLiveDetails.length, failed: 0 } }));
@@ -1184,6 +1207,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         }
       }));
 
+      if (requestId !== yearRequest.current) return;
       setLoadedYears((current) => new Set([...current, returnedYear]));
       setAttemptedYears((current) => new Set([...current, returnedYear]));
       setYearErrors((current) => {
@@ -1196,12 +1220,12 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         ? `Payroll loaded with ${failedShows.length} open show${failedShows.length === 1 ? "" : "s"} needing retry. Paid shows are shown from saved snapshots.`
         : `Payroll loaded. Paid shows are shown from snapshots; unpaid and partially paid shows are open with full Payroll rows.`);
     } catch (error) {
-      setYear(previousYear);
+      if (requestId !== yearRequest.current) return;
       const nextMessage = error instanceof Error ? error.message : `Unable to load ${nextYear} Payroll show list.`;
       setYearErrors((current) => ({ ...current, [nextYear]: nextMessage }));
       setMessage(nextMessage);
     } finally {
-      setLoadingYear(null);
+      if (requestId === yearRequest.current) setLoadingYear(null);
     }
   }
 
@@ -1264,7 +1288,10 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
       diagnostics?: PayrollPerformanceDiagnostics;
     }>(response);
     if (!response.ok) throw new Error(result.message || result.error || "Unable to load this show's payroll.");
-    const nextRows = Array.isArray(result.crewRows) ? result.crewRows : [];
+    const nextRows = (Array.isArray(result.crewRows) ? result.crewRows : []).map((row) => {
+      const saved = savedRows.current.get(row.key);
+      return mergePayrollPaymentState(row, saved);
+    });
     const nextEvents = Array.isArray(result.eventSummaries) ? result.eventSummaries : [];
     if (result.error && !nextRows.length) throw new Error(result.error);
     if (!nextRows.length && !nextEvents.some((event) => event.showId === showId)) {
@@ -1295,9 +1322,13 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
   useEffect(() => {
     let cancelled = false;
 
-    if (!loadedYears.has(initialYear) && !attemptedYears.has(initialYear)) {
-      void selectPayrollYear(initialYear);
-    }
+    let restoredYear = initialYear;
+    try {
+      const chosen = new URL(window.location.href).searchParams.get("year") || window.localStorage.getItem("els-payroll-year");
+      const parsed = Number(chosen);
+      if (chosen && Number.isInteger(parsed) && parsed >= 1900 && parsed <= 2199) restoredYear = parsed;
+    } catch { /* The initial year remains usable. */ }
+    if (!loadedYears.has(restoredYear) || restoredYear !== initialYear) void selectPayrollYear(restoredYear);
 
     void (async () => {
       try {
@@ -1637,7 +1668,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
   }
 
   function selectedPayrollRows(event: PayrollEventSummary) {
-    return event.rows.filter((row) => selectedPurchaseOrderKeys.has(row.key));
+    return event.rows.filter((row) => !isOwnerDrawPayee(row.crewName) && selectedPurchaseOrderKeys.has(row.key));
   }
 
   function exportCapitalOneVendorsFromPayroll(event: PayrollEventSummary) {
@@ -1673,6 +1704,9 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
     setSavingPurchaseOrderKey(row.key);
     if (!quiet) setMessage("");
     try {
+      const pending = rowSaveQueues.current.get(row.key);
+      if (pending && !await pending) throw new Error("Save the payroll terms/date successfully before preparing the Purchase Order.");
+      if (isOwnerDrawPayee(row.crewName)) throw new Error("Storm Leigh is paid as an owner draw, not a contractor Purchase Order.");
       if (poDraftNumber(draft.negativeAmount) > 0 && !draft.negativeDescription.trim()) {
         throw new Error("Enter a reason for the negative adjustment.");
       }
@@ -1683,7 +1717,9 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.ok) throw new Error(result.message || "Unable to save Purchase Order.");
-      setRows((current) => current.map((item) => item.key === row.key ? { ...item, purchaseOrder: result.purchase_order, overrideAmount: result.row?.payout_override ?? result.purchase_order?.total ?? item.overrideAmount } : item));
+      const updated = { ...(savedRows.current.get(row.key) || row), purchaseOrder: result.purchase_order, overrideAmount: result.row?.payout_override ?? result.purchase_order?.total ?? row.overrideAmount };
+      savedRows.current.set(row.key, updated);
+      setRows((current) => current.map((item) => item.key === row.key ? { ...item, purchaseOrder: updated.purchaseOrder, overrideAmount: updated.overrideAmount } : item));
       if (!quiet) setMessage(result.message || `Purchase Order saved for ${row.crewName}.`);
       return result.purchase_order;
     } catch (error) {
@@ -1696,7 +1732,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
   }
 
   async function sendPurchaseOrders(event: PayrollEventSummary, selectedOnly: boolean) {
-    const targets = event.rows.filter((row) => !selectedOnly || selectedPurchaseOrderKeys.has(row.key));
+    const targets = event.rows.filter((row) => !isOwnerDrawPayee(row.crewName) && (!selectedOnly || selectedPurchaseOrderKeys.has(row.key)));
     if (!targets.length) {
       setMessage(selectedOnly ? "Select at least one contractor for this show." : "This show does not have any contractor payroll rows.");
       return;
@@ -1731,7 +1767,16 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
     }
   }
 
-  async function saveStatus(row: PayrollCrewShowRow, changes: Partial<SavePayload>) {
+  function saveStatus(row: PayrollCrewShowRow, changes: Partial<SavePayload>): Promise<boolean> {
+    // Date, terms, notes and status edits for a person must reach the server in
+    // order. A slow response must not overwrite a newer edit with stale fields.
+    const previous = rowSaveQueues.current.get(row.key) || Promise.resolve(true);
+    const task = previous.catch(() => false).then(() => saveStatusNow(mergePayrollPaymentState(row, savedRows.current.get(row.key)), changes));
+    rowSaveQueues.current.set(row.key, task);
+    return task;
+  }
+
+  async function saveStatusNow(row: PayrollCrewShowRow, changes: Partial<SavePayload>): Promise<boolean> {
     const nextPayload: SavePayload = {
       show_id: row.showId,
       crew_id: row.crewId,
@@ -1739,10 +1784,12 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
       payment_status: changes.payment_status ?? paymentStatusFor(row),
       payout_override: changes.payout_override === undefined ? row.overrideAmount : changes.payout_override,
       notes: changes.notes ?? row.notes,
-      scheduled_for: changes.scheduled_for === undefined ? row.scheduledFor : changes.scheduled_for,
+      scheduled_for: changes.scheduled_for === undefined ? payrollScheduledBy(row) : changes.scheduled_for,
+      payment_terms_days: changes.payment_terms_days ?? row.paymentTermsDays ?? 30,
+      schedule_mode: changes.schedule_mode ?? row.scheduleMode ?? (row.scheduledFor ? "manual" : "automatic"),
     };
 
-    setSavingKey(row.key);
+    setSavingRowKeys((current) => new Set([...current, row.key]));
     setMessage("");
     try {
       const response = await fetch("/api/payroll", {
@@ -1750,43 +1797,44 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(nextPayload),
       });
-      const result = (await response.json()) as { ok?: boolean; message?: string; row?: { id?: string; paid?: boolean; payment_status?: PayrollPaymentStatus; payout_override?: number | null; notes?: string | null; scheduled_for?: string | null } };
+      const result = (await response.json()) as { ok?: boolean; message?: string; row?: { id?: string; paid?: boolean; payment_status?: PayrollPaymentStatus; payout_override?: number | null; notes?: string | null; scheduled_for?: string | null; payment_terms_days?: NetDays; schedule_mode?: ScheduleMode } };
       if (!response.ok || !result.ok) throw new Error(result.message || "Payroll update failed.");
 
-      setRows((current) =>
-        current.map((item) =>
-          item.key === row.key
-            ? {
-                ...item,
-                paid: Boolean(result.row?.paid),
-                paymentStatus: result.row?.payment_status ?? derivePaymentStatus(Boolean(result.row?.paid) ? "paid" : "unpaid", result.row?.scheduled_for ?? null),
-                overrideAmount: result.row?.payout_override ?? null,
-                notes: result.row?.notes ?? "",
-                scheduledFor: result.row?.scheduled_for ?? null,
-                statusId: result.row?.id ?? item.statusId,
-              }
-            : item,
-        ),
-      );
+      const updated: PayrollCrewShowRow = {
+        ...row, paid: Boolean(result.row?.paid),
+        paymentStatus: result.row?.payment_status ?? derivePaymentStatus(Boolean(result.row?.paid) ? "paid" : "unpaid", result.row?.scheduled_for ?? null),
+        overrideAmount: result.row?.payout_override ?? null, notes: result.row?.notes ?? "",
+        scheduledFor: result.row?.scheduled_for ?? null, statusId: result.row?.id ?? row.statusId,
+        paymentTermsDays: result.row?.payment_terms_days ?? nextPayload.payment_terms_days,
+        scheduleMode: result.row?.schedule_mode ?? nextPayload.schedule_mode,
+      };
+      savedRows.current.set(row.key, updated);
+      setRows((current) => current.map((item) => item.key === row.key ? mergePayrollPaymentState(item, updated) : item));
       setMessage(`Updated ${row.crewName} on ${row.showName}.`);
+      return true;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Payroll update failed.");
+      setRows((current) => current.map((item) => item.key === row.key ? mergePayrollPaymentState(item, row) : item));
+      return false;
     } finally {
-      setSavingKey(null);
+      setSavingRowKeys((current) => { const next = new Set(current); next.delete(row.key); return next; });
     }
   }
 
   async function markEvent(event: PayrollEventSummary, paymentStatus: PayrollPaymentStatus) {
-    const cleanStatus = paymentStatus === "paid" ? "paid" : "unpaid";
+    const cleanStatus = paymentStatus;
     for (const row of event.rows) {
-      await saveStatus(row, { payment_status: cleanStatus, paid: cleanStatus === "paid", scheduled_for: cleanStatus === "unpaid" ? null : row.scheduledFor });
+      const override = eventDateDrafts[event.showId];
+      const date = override !== undefined ? override : payrollScheduledBy(row);
+      if (cleanStatus === "scheduled" && !validPayrollDate(date)) { setMessage("Choose a valid complete date first."); return; }
+      if (!await saveStatus(row, { payment_status: cleanStatus, paid: cleanStatus === "paid", scheduled_for: date || null, ...(override !== undefined ? { schedule_mode: "manual" as const } : {}) })) return;
     }
   }
 
   async function applyScheduledForToEvent(event: PayrollEventSummary, scheduledFor: string) {
     const cleanDate = scheduledFor.trim();
-    if (!cleanDate) {
-      setMessage("Choose a scheduled-for date first.");
+    if (!validPayrollDate(cleanDate)) {
+      setMessage("Choose a valid scheduled-by date with a complete year first.");
       return;
     }
     setSavingScheduledShowId(event.showId);
@@ -1794,9 +1842,14 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
     try {
       for (const row of event.rows) {
         const nextStatus = paymentStatusFor(row) === "paid" ? "paid" : "scheduled";
-        await saveStatus(row, { scheduled_for: cleanDate, payment_status: nextStatus, paid: nextStatus === "paid" });
+        if (!await saveStatus(row, { scheduled_for: cleanDate, schedule_mode: "manual", payment_status: nextStatus, paid: nextStatus === "paid" })) return;
+        setRowDateDrafts((current) => { const next = { ...current }; delete next[row.key]; return next; });
       }
-      setMessage(`Scheduled-for date applied to ${event.rows.length} tech${event.rows.length === 1 ? "" : "s"} on ${event.showName}.`);
+      if (event.coordinatorPayment?.coordinatorUserId) {
+        const status = event.coordinatorPayment.paymentStatus === "paid" ? "paid" : "scheduled";
+        if (!await saveCoordinatorPayment(event, { scheduled_for: cleanDate, payment_status: status, paid: status === "paid" })) return;
+      }
+      setMessage(`Scheduled-by date applied to ${event.rows.length} tech${event.rows.length === 1 ? "" : "s"}${event.coordinatorPayment?.coordinatorUserId ? " and the coordinator" : ""} on ${event.showName}.`);
     } finally {
       setSavingScheduledShowId(null);
     }
@@ -1814,7 +1867,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
     const current = event.coordinatorPayment;
     if (!current?.coordinatorUserId) {
       setMessage("Assign a coordinator to this show before saving coordinator payroll.");
-      return;
+      return false;
     }
     const scheduledFor = changes.scheduled_for === undefined ? current.scheduledFor : changes.scheduled_for;
     const status = changes.payment_status ?? current.paymentStatus;
@@ -1849,8 +1902,10 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         coordinatorPaymentStatusId: result.row?.id ?? current.statusId,
       });
       setMessage(`Updated coordinator payment for ${event.showName}.`);
+      return true;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Coordinator payroll update failed.");
+      return false;
     } finally {
       setSavingKey(null);
     }
@@ -2146,7 +2201,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
       event.showVenue,
       `${event.showStart} to ${event.showEnd}`,
       event.estimatedRevenue,
-      event.payableTotal + coordinatorCostForEvent(event),
+      (event.payableTotal + coordinatorCostForEvent(event) - (event.ownerDrawTotal || 0)),
       event.expenses,
       event.estimatedProfit,
       event.taxReserve,
@@ -2155,19 +2210,19 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
       event.consecratedHandsDone ? "YES" : "NO",
       event.combinedReserve,
       event.pureProfit,
-      event.financialNotes,
+      ownerNotesText(event.financialNotes),
     ] : [
       event.showName,
       event.showClient,
       event.showVenue,
       `${event.showStart} to ${event.showEnd}`,
       event.estimatedRevenue,
-      event.payableTotal + coordinatorCostForEvent(event),
+      (event.payableTotal + coordinatorCostForEvent(event) - (event.ownerDrawTotal || 0)),
       event.expenses,
       event.estimatedProfit,
       event.taxReserveDone ? "YES" : "NO",
       event.consecratedHandsDone ? "YES" : "NO",
-      event.financialNotes,
+      ownerNotesText(event.financialNotes),
     ]);
     return [header, ...rows];
   }
@@ -2316,7 +2371,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
       meta: [
         ["Dates", `${formatPayrollDate(event.showStart)} to ${formatPayrollDate(event.showEnd)}`],
         ["Estimated Revenue", money(event.estimatedRevenue)],
-        ["Contract Labor", money(event.payableTotal + coordinatorCostForEvent(event))],
+        ["Contract Labor", money((event.payableTotal + coordinatorCostForEvent(event) - (event.ownerDrawTotal || 0)))],
         ["Expenses", money(event.expenses)],
         ["Net Profit", money(event.estimatedProfit)],
         ["Tax Reserve Set Aside", event.taxReserveDone ? "YES" : "NO"],
@@ -2334,7 +2389,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
       [plTotals.estimatedRevenue, plTotals.contractLabor, plTotals.expenses, plTotals.estimatedProfit],
       [],
       ["Show", "Client", "Venue", "Dates", "Estimated Revenue", "Contract Labor", "Expenses", "Net Profit", "Tax Reserve Set Aside", "The Emanuel Initiative Done", "Financial Notes"],
-      ...summaryEvents.map((event) => [event.showName, event.showClient, event.showVenue, `${event.showStart} to ${event.showEnd}`, event.estimatedRevenue, event.payableTotal + coordinatorCostForEvent(event), event.expenses, event.estimatedProfit, event.taxReserveDone ? "YES" : "NO", event.consecratedHandsDone ? "YES" : "NO", event.financialNotes]),
+      ...summaryEvents.map((event) => [event.showName, event.showClient, event.showVenue, `${event.showStart} to ${event.showEnd}`, event.estimatedRevenue, (event.payableTotal + coordinatorCostForEvent(event) - (event.ownerDrawTotal || 0)), event.expenses, event.estimatedProfit, event.taxReserveDone ? "YES" : "NO", event.consecratedHandsDone ? "YES" : "NO", ownerNotesText(event.financialNotes)]),
     ]);
   }
 
@@ -2351,7 +2406,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         event.showVenue,
         `${event.showStart} to ${event.showEnd}`,
         event.estimatedRevenue,
-        event.payableTotal + coordinatorCostForEvent(event),
+        (event.payableTotal + coordinatorCostForEvent(event) - (event.ownerDrawTotal || 0)),
         event.expenses,
         event.estimatedProfit,
         event.taxReserve,
@@ -2360,7 +2415,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         event.consecratedHandsDone ? "YES" : "NO",
         event.combinedReserve,
         event.pureProfit,
-        event.financialNotes,
+        ownerNotesText(event.financialNotes),
       ]),
     ]);
   }
@@ -2393,7 +2448,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
   function exportEventCsv(event: PayrollEventSummary) {
     downloadCsv(`${event.showName.replace(/[^a-z0-9]+/gi, "_")}_payroll.csv`, [
       ["Show P&L", "Estimated Revenue", "Contract Labor", "Expenses", "Net Profit", "Tax Reserve", "Tax Reserve Set Aside", "The Emanuel Initiative", "The Emanuel Initiative Done"],
-      [event.showName, event.estimatedRevenue, event.payableTotal + coordinatorCostForEvent(event), event.expenses, event.estimatedProfit, event.taxReserve, event.taxReserveDone ? "YES" : "NO", event.consecratedHandsDonation, event.consecratedHandsDone ? "YES" : "NO"],
+      [event.showName, event.estimatedRevenue, (event.payableTotal + coordinatorCostForEvent(event) - (event.ownerDrawTotal || 0)), event.expenses, event.estimatedProfit, event.taxReserve, event.taxReserveDone ? "YES" : "NO", event.consecratedHandsDonation, event.consecratedHandsDone ? "YES" : "NO"],
       [],
       ["Show", "Crew", "Roles", "Estimated", "Override", "Payable", "Scheduled For", "Status", "Phone", "Email", "Notes"],
       ...event.rows.map((row) => [row.showName, row.crewName, row.roles.join(" / "), row.estimatedTotal, row.overrideAmount ?? "", payable(row), row.scheduledFor || "", paymentStatusLabel(paymentStatusFor(row)), row.crewPhone, row.crewEmail, row.notes]),
@@ -2771,7 +2826,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         <div className="row" style={{ alignItems: "center" }}>
           <div>
             <h2 style={{ marginBottom: 4 }}>{year} owner P&L</h2>
-            <p className="muted" style={{ margin: 0 }}>{viewLabel(reportView)}. Totals load from paid-show snapshots plus live open-show payroll rows. Paid shows stay archived at the bottom; unpaid and partially paid shows stay open with controls visible. Current view excludes future shows from payable, unpaid, and P&L totals. Estimated view includes all scheduled shows for planning. Contract labor includes tech payouts plus non-waived coordinator pay.</p>
+            <p className="muted" style={{ margin: 0 }}>{viewLabel(reportView)}. Totals load from paid-show snapshots plus live open-show payroll rows. Paid shows stay archived at the bottom; unpaid and partially paid shows stay open with controls visible. Current view excludes future shows from payable, unpaid, and P&L totals. Estimated view includes all scheduled shows for planning. Contract labor includes contractor tech payouts and non-waived coordinator pay; owner draws are shown separately.</p>
             {reportView === "current" && excludedFutureShowCount ? <p className="muted small" style={{ margin: "8px 0 0" }}>{excludedFutureShowCount} future show{excludedFutureShowCount === 1 ? "" : "s"} excluded from the current view.</p> : null}
             <p className="muted small" style={{ margin: "8px 0 0" }}>{totalScopeLabel}</p>
           </div>
@@ -2787,7 +2842,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         </div>
         <div className="pl-grid" style={{ marginTop: 14 }}>
           <div className="card compact"><div className="muted small">Estimated revenue</div><strong>{summaryMoney(plTotals.estimatedRevenue)}</strong></div>
-          <div className="card compact"><div className="muted small">Contract labor</div><strong>{summaryMoney(plTotals.contractLabor)}</strong><div className="muted small">Tech payouts + non-waived coordinator pay</div></div>
+          <div className="card compact"><div className="muted small">Contract labor</div><strong>{summaryMoney(plTotals.contractLabor)}</strong><div className="muted small">Contractor payouts + non-owner coordinator pay</div></div>
           <div className="card compact"><div className="muted small">Expenses</div><strong>{summaryMoney(plTotals.expenses)}</strong></div>
           <div className="card compact"><div className="muted small">Net profit</div><strong>{summaryMoney(plTotals.estimatedProfit)}</strong></div>
         </div>
@@ -2833,6 +2888,16 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
             {showTechTotals ? "Hide total techs" : "Show total techs"}
           </button>
         </div>
+      </section>
+
+      <section className="card">
+        <div className="row"><div><h3>Owner draws — Storm Leigh</h3><p className="muted small">Owner draws are distributions, separate from contractor labor and 1099 totals.</p></div>
+          <button type="button" className="ghost" onClick={() => downloadCsv(`ELS_${year}_owner_draws.csv`, [
+            ["Year", "Event", "Owner", "Allocated owner draws", "Paid owner draws", "Open owner draws"],
+            ...summaryEvents.filter((event) => (event.ownerDrawTotal || 0) > 0).map((event) => [year, event.showName, "Storm Leigh", event.ownerDrawTotal || 0, paidOwnerDrawsForEvent(event, payable), Math.max(0, (event.ownerDrawTotal || 0) - paidOwnerDrawsForEvent(event, payable))]),
+          ])}>Export owner draws</button>
+        </div>
+        <div className="toolbar"><span className="badge">Paid: {money(summaryEvents.reduce((sum, event) => sum + paidOwnerDrawsForEvent(event, payable), 0))}</span><span className="badge">Open: {money(summaryEvents.reduce((sum, event) => sum + Math.max(0, (event.ownerDrawTotal || 0) - paidOwnerDrawsForEvent(event, payable)), 0))}</span></div>
       </section>
 
       {showTechTotals ? (
@@ -2909,7 +2974,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                 </div>
                 <div className="pl-grid" style={{ marginTop: 12 }}>
                   <span className="badge">Revenue {money(event.estimatedRevenue)}</span>
-                  <span className="badge">Labor {money(event.payableTotal + coordinatorCostForEvent(event))}</span>
+                  <span className="badge">Labor {money((event.payableTotal + coordinatorCostForEvent(event) - (event.ownerDrawTotal || 0)))}</span>
                   <span className="badge">Expenses {money(event.expenses)}</span>
                   <span className="badge">Net profit {money(event.estimatedProfit)}</span>
                   <span className={event.taxReserveDone ? "badge event-badge-current" : "badge"}>Taxes {event.taxReserveDone ? "set aside" : "open"}</span>
@@ -2989,12 +3054,17 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                     Scheduled for
                     <input
                       type="date"
-                      value={event.coordinatorPayment.scheduledFor || ""}
-                      onChange={(inputEvent) => {
-                        const nextDate = inputEvent.target.value || null;
+                      disabled={savingKey === `coordinator:${event.showId}`}
+                      value={rowDateDrafts[`coordinator:${event.showId}`] ?? event.coordinatorPayment.scheduledFor ?? ""}
+                      onChange={(inputEvent) => setRowDateDrafts((current) => ({ ...current, [`coordinator:${event.showId}`]: inputEvent.target.value }))}
+                      onKeyDown={(inputEvent) => { if (inputEvent.key === "Enter") inputEvent.currentTarget.blur(); }}
+                      onBlur={(inputEvent) => {
+                        const nextDate = inputEvent.currentTarget.value || null;
+                        if (!inputEvent.currentTarget.validity.valid || (nextDate && !validPayrollDate(nextDate))) { setMessage("Enter a valid coordinator date with a complete year."); return; }
                         const nextStatus: PayrollPaymentStatus = event.coordinatorPayment?.paymentStatus === "paid" ? "paid" : nextDate ? "scheduled" : "unpaid";
-                        updateLocalCoordinator(event.showId, { coordinatorScheduledFor: nextDate, coordinatorPaymentStatus: nextStatus, coordinatorPaid: nextStatus === "paid" });
-                        void saveCoordinatorPayment(event, { scheduled_for: nextDate, payment_status: nextStatus, paid: nextStatus === "paid" });
+                        void saveCoordinatorPayment(event, { scheduled_for: nextDate, payment_status: nextStatus, paid: nextStatus === "paid" }).then((ok) => {
+                          if (ok) setRowDateDrafts((current) => { const next = { ...current }; delete next[`coordinator:${event.showId}`]; return next; });
+                        });
                       }}
                     />
                   </label>
@@ -3002,11 +3072,12 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                     Status
                     <select
                       value={event.coordinatorPayment.paymentStatus}
-                      disabled={savingKey === `coordinator:${event.showId}`}
+                      disabled={savingKey === `coordinator:${event.showId}` || rowDateDrafts[`coordinator:${event.showId}`] !== undefined}
                       style={{ ...paymentStatusStyle(event.coordinatorPayment.paymentStatus), minWidth: 130, padding: "8px 10px", border: "1px solid", borderRadius: 10 }}
                       onChange={(selectEvent) => {
                         const nextStatus = selectEvent.target.value as PayrollPaymentStatus;
-                        const nextScheduledFor = nextStatus === "scheduled" ? (event.coordinatorPayment?.scheduledFor || eventDefaultScheduledFor(event)) : nextStatus === "unpaid" ? null : event.coordinatorPayment?.scheduledFor || null;
+                        const nextScheduledFor = nextStatus === "scheduled" ? (eventDateDrafts[event.showId] ?? event.coordinatorPayment?.scheduledFor ?? eventDefaultScheduledFor(event)) : nextStatus === "unpaid" ? null : event.coordinatorPayment?.scheduledFor || null;
+                        if (nextStatus === "scheduled" && !validPayrollDate(nextScheduledFor)) { setMessage("Choose a valid scheduled-by date first."); return; }
                         updateLocalCoordinator(event.showId, { coordinatorPaymentStatus: nextStatus, coordinatorPaid: nextStatus === "paid", coordinatorScheduledFor: nextScheduledFor });
                         void saveCoordinatorPayment(event, { payment_status: nextStatus, paid: nextStatus === "paid", scheduled_for: nextScheduledFor });
                       }}
@@ -3043,6 +3114,17 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
               </div>
             ) : null}
 
+            <div className="card compact" style={{ marginTop: 14 }}>
+              <label className="checkbox-card"><input type="checkbox" checked={isOwnerTechEvent(event.financialNotes)} disabled={savingFinancialShowId === event.showId || event.rows.filter((row) => isOwnerDrawPayee(row.crewName)).length !== 1} onChange={async (inputEvent) => {
+                const previous = event.financialNotes;
+                const next = withOwnerTechEvent(previous, inputEvent.target.checked);
+                updateEventFinancials(event.showId, { financialNotes: next });
+                const ok = await saveEventFinancials(event, { financialNotes: next });
+                if (!ok) updateEventFinancials(event.showId, { financialNotes: previous });
+              }} /><span><strong>Owner tech work — full revenue passes through to Storm Leigh</strong><small>Allocates this event’s full revenue as an owner draw. Add Storm Leigh as a technician to enable. Other crew payouts and expenses remain recorded separately.</small></span></label>
+              <div className="small">Owner draw allocations: <strong>{money(event.ownerDrawTotal || 0)}</strong> · separate from contractor labor and 1099 compensation.</div>
+            </div>
+
             <div className="card compact" style={{ marginTop: 14, background: "#f3f8f5", boxShadow: "none", borderLeft: "4px solid #0f5f3d" }}>
               <div className="row" style={{ alignItems: "center" }}>
                 <div>
@@ -3063,14 +3145,15 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
             <div className="card compact" style={{ marginTop: 14, background: "#fbfcfd", boxShadow: "none" }}>
               <div className="row" style={{ alignItems: "flex-end" }}>
                 <div>
-                  <strong>Payment scheduled-for date</strong>
+                  <strong>Payment scheduled-by date</strong>
                   <div className="small muted">Set one default date for every tech on this show, then adjust individual techs below only if needed.</div>
                 </div>
                 <label className="field" style={{ minWidth: 220 }}>
                   Event default date
                   <input
                     type="date"
-                    defaultValue={eventDefaultScheduledFor(event)}
+                    value={eventDateDrafts[event.showId] ?? eventDefaultScheduledFor(event)}
+                    onChange={(inputEvent) => setEventDateDrafts((current) => ({ ...current, [event.showId]: inputEvent.target.value }))}
                     id={`scheduled-for-${event.showId}`}
                   />
                 </label>
@@ -3079,8 +3162,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                   type="button"
                   disabled={savingScheduledShowId === event.showId}
                   onClick={() => {
-                    const input = document.getElementById(`scheduled-for-${event.showId}`) as HTMLInputElement | null;
-                    void applyScheduledForToEvent(event, input?.value || "");
+                    void applyScheduledForToEvent(event, eventDateDrafts[event.showId] ?? eventDefaultScheduledFor(event));
                   }}
                 >
                   {savingScheduledShowId === event.showId ? "Saving..." : "Apply to everyone"}
@@ -3127,10 +3209,10 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                 <label className="field" style={{ minWidth: 260, flex: 1 }}>
                   P&L notes
                   <input
-                    value={event.financialNotes}
+                    value={ownerNotesText(event.financialNotes)}
                     placeholder="Invoice number, reimbursables, expense notes..."
-                    onChange={(e) => updateEventFinancials(event.showId, { financialNotes: e.target.value })}
-                    onBlur={(e) => void updateAndSaveEventFinancials(event, { financialNotes: e.currentTarget.value })}
+                    onChange={(e) => updateEventFinancials(event.showId, { financialNotes: withOwnerTechEvent(e.target.value, isOwnerTechEvent(event.financialNotes)) })}
+                    onBlur={(e) => void updateAndSaveEventFinancials(event, { financialNotes: withOwnerTechEvent(e.currentTarget.value, isOwnerTechEvent(event.financialNotes)) })}
                   />
                 </label>
                 <button className="ghost" type="button" disabled={savingFinancialShowId === event.showId} onClick={() => void saveEventFinancials(event)}>
@@ -3245,7 +3327,8 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                     <th style={{ padding: "10px 8px" }}>Estimated</th>
                     <th style={{ padding: "10px 8px" }}>PO total override</th>
                     <th style={{ padding: "10px 8px" }}>Payable</th>
-                    <th style={{ padding: "10px 8px" }}>Scheduled for</th>
+                    <th style={{ padding: "10px 8px" }}>Payment terms</th>
+                    <th style={{ padding: "10px 8px" }}>Scheduled by</th>
                     <th style={{ padding: "10px 8px" }}>Status</th>
                     <th style={{ padding: "10px 8px" }}>Direct deposit ready</th>
                     <th style={{ padding: "10px 8px" }}>Details</th>
@@ -3253,16 +3336,16 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                 </thead>
                 <tbody>
                   {event.rows.map((row) => {
-                    const isSaving = savingKey === row.key;
+                    const isSaving = savingRowKeys.has(row.key);
                     const isOpen = openRows.has(row.key);
                     const poDraft = currentPurchaseOrderDraft(row);
                     const payoutOverride = effectivePayoutOverride(row, poDraft);
                     return (
                       <tr key={row.key} style={{ borderBottom: "1px solid var(--line)", verticalAlign: "top" }}>
                         <td style={{ padding: "12px 8px", minWidth: 190 }}>
-                          <label style={{ display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={selectedPurchaseOrderKeys.has(row.key)} onChange={(event) => togglePurchaseOrderSelection(row.key, event.target.checked)} /><strong>{row.crewName}</strong></label>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" disabled={isOwnerDrawPayee(row.crewName)} checked={!isOwnerDrawPayee(row.crewName) && selectedPurchaseOrderKeys.has(row.key)} onChange={(event) => togglePurchaseOrderSelection(row.key, event.target.checked)} /><strong>{row.crewName}</strong></label>{isOwnerDrawPayee(row.crewName) ? <span className="badge">Owner draw · excluded from 1099</span> : null}
                           <div className="muted small">{row.crewPhone || row.crewEmail || "No contact"}</div>
-                          <div style={{ marginTop: 6 }}><span className="badge" style={{ background: row.purchaseOrder?.status === "changes_requested" || row.purchaseOrder?.status === "delivery_failed" ? "#fee2e2" : row.purchaseOrder?.status === "approved" || row.purchaseOrder?.status === "auto_approved" ? "#dcfce7" : "#fff7d6", fontWeight: 800 }}>{purchaseOrderStatusLabel(row.purchaseOrder?.status)}</span></div>
+                          <div style={{ marginTop: 6 }}><span className="badge" style={{ background: row.purchaseOrder?.status === "changes_requested" || row.purchaseOrder?.status === "delivery_failed" ? "#fee2e2" : row.purchaseOrder?.status === "approved" || row.purchaseOrder?.status === "auto_approved" ? "#dcfce7" : "#fff7d6", fontWeight: 800 }}>{isOwnerDrawPayee(row.crewName) ? "Owner draw" : purchaseOrderStatusLabel(row.purchaseOrder?.status)}</span></div>
                           {purchaseOrderChangeRequestIsUnread(row.purchaseOrder) ? <div style={{ marginTop: 6 }}><span className="nav-notification-badge">New request</span></div> : null}
                         </td>
                         <td style={{ padding: "12px 8px", minWidth: 160 }}>{row.roles.join(" / ") || "—"}</td>
@@ -3270,7 +3353,8 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                         <td style={{ padding: "12px 8px" }}>{money(row.estimatedTotal)}</td>
                         <td style={{ padding: "12px 8px", minWidth: 130 }}>
                           <input
-                            value={moneyDraftValue(`crew:${row.key}`, payoutOverride)}
+                            disabled={row.ownerPassThroughAmount !== undefined}
+                            value={row.ownerPassThroughAmount !== undefined ? currencyText(row.ownerPassThroughAmount) : moneyDraftValue(`crew:${row.key}`, payoutOverride)}
                             placeholder="auto"
                             inputMode="decimal"
                             onChange={(event) => changeMoneyDraft(`crew:${row.key}`, event.target.value)}
@@ -3291,18 +3375,40 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                           <div className="small muted" style={{ marginTop: 4 }}>Sets the final Purchase Order total.</div>
                         </td>
                         <td style={{ padding: "12px 8px", fontWeight: 800 }}>{money(payable(row, poDraft))}</td>
+                        <td style={{ padding: "12px 8px", minWidth: 120 }}>
+                          <select aria-label={`Payment terms for ${row.crewName}`} value={row.paymentTermsDays || 30} disabled={isSaving} onChange={(inputEvent) => {
+                            const days = Number(inputEvent.target.value) as NetDays;
+                            const next = { ...row, paymentTermsDays: days };
+                            const date = payrollScheduledBy(next);
+                            void saveStatus(row, { payment_terms_days: days, scheduled_for: date });
+                          }}><option value={15}>Net 15</option><option value={30}>Net 30</option></select>
+                          <div className="small muted">Last worked: {lastPayrollWorkDate(row) || "No work date"}</div>
+                        </td>
                         <td style={{ padding: "12px 8px", minWidth: 150 }}>
                           <input
                             type="date"
-                            value={row.scheduledFor || ""}
-                            onChange={(event) => {
-                              const nextDate = event.target.value || null;
-                              const nextStatus: PayrollPaymentStatus = paymentStatusFor(row) === "paid" ? "paid" : nextDate ? "scheduled" : "unpaid";
-                              updateLocal(row.key, { scheduledFor: nextDate, paymentStatus: nextStatus, paid: nextStatus === "paid" });
-                              void saveStatus(row, { scheduled_for: nextDate, payment_status: nextStatus, paid: nextStatus === "paid" });
+                            disabled={isSaving}
+                            value={rowDateDrafts[row.key] ?? payrollScheduledBy(row) ?? ""}
+                            onChange={(inputEvent) => setRowDateDrafts((current) => ({ ...current, [row.key]: inputEvent.target.value }))}
+                            onKeyDown={(inputEvent) => { if (inputEvent.key === "Enter") inputEvent.currentTarget.blur(); }}
+                            onBlur={(inputEvent) => {
+                              if (!inputEvent.currentTarget.validity.valid) { setMessage("Finish entering the full date before saving."); return; }
+                              const date = inputEvent.currentTarget.value;
+                              if (date && !validPayrollDate(date)) { setMessage("Enter a valid date with the complete year before saving."); return; }
+                              if (date === (payrollScheduledBy(row) || "")) return;
+                              const status = paymentStatusFor(row) === "paid" ? "paid" : date ? "scheduled" : "unpaid";
+                              void saveStatus(row, { scheduled_for: date || null, schedule_mode: "manual", payment_status: status, paid: status === "paid" }).then((ok) => {
+                                if (ok) setRowDateDrafts((current) => { const next = { ...current }; delete next[row.key]; return next; });
+                              });
                             }}
                             style={{ width: 135, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 10 }}
                           />
+                          <div className="small muted">{row.scheduleMode === "manual" || (!row.scheduleMode && row.scheduledFor) ? "Manual override" : `Last worked + ${row.paymentTermsDays || 30} days`}</div>
+                          {row.scheduleMode === "manual" || (!row.scheduleMode && row.scheduledFor) ? <button type="button" className="ghost small" disabled={isSaving} onClick={() => {
+                            const date = addNetDays(lastPayrollWorkDate(row), row.paymentTermsDays || 30);
+                            void saveStatus(row, { schedule_mode: "automatic", scheduled_for: date });
+                            setRowDateDrafts((current) => { const next = { ...current }; delete next[row.key]; return next; });
+                          }}>Use Net {row.paymentTermsDays || 30} date</button> : null}
                         </td>
                         <td style={{ padding: "12px 8px", minWidth: 140 }}>
                           <select
@@ -3311,9 +3417,12 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                             style={{ ...paymentStatusStyle(paymentStatusFor(row)), minWidth: 130, padding: "8px 10px", border: "1px solid", borderRadius: 10 }}
                             onChange={(selectEvent) => {
                               const nextStatus = selectEvent.target.value as PayrollPaymentStatus;
-                              const nextScheduledFor = nextStatus === "scheduled" ? (row.scheduledFor || eventDefaultScheduledFor(event)) : nextStatus === "unpaid" ? null : row.scheduledFor;
+                              const eventOverride = eventDateDrafts[event.showId];
+                              const individualDate = rowDateDrafts[row.key] !== undefined ? rowDateDrafts[row.key] || null : payrollScheduledBy(row);
+                              const nextScheduledFor = nextStatus === "scheduled" ? (eventOverride ?? individualDate) : individualDate;
+                              if (nextStatus === "scheduled" && !validPayrollDate(nextScheduledFor)) { setMessage("Choose a valid scheduled-by date first."); return; }
                               updateLocal(row.key, { paymentStatus: nextStatus, paid: nextStatus === "paid", scheduledFor: nextScheduledFor });
-                              void saveStatus(row, { payment_status: nextStatus, paid: nextStatus === "paid", scheduled_for: nextScheduledFor });
+                              void saveStatus(row, { payment_status: nextStatus, paid: nextStatus === "paid", scheduled_for: nextScheduledFor, ...((nextStatus === "scheduled" && eventOverride !== undefined) || rowDateDrafts[row.key] !== undefined ? { schedule_mode: "manual" as const } : {}) });
                             }}
                           >
                             <option value="unpaid">Unpaid</option>
@@ -3333,7 +3442,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                           <button className="ghost" type="button" onClick={() => toggleDetails(row)}>{isOpen ? "Hide" : row.purchaseOrder?.status === "changes_requested" ? "Open change request" : "View"}</button>
                           {isOpen ? (
                             <div className="card compact" style={{ marginTop: 10, minWidth: 360 }}>
-                              <div style={{ borderBottom: "1px solid var(--line)", paddingBottom: 14, marginBottom: 14 }}>
+                              {isOwnerDrawPayee(row.crewName) ? <div className="card compact"><strong>Owner draw</strong><p>{money(payable(row))} allocated to Storm Leigh. This payment is excluded from contractor labor and 1099 compensation.</p></div> : <div style={{ borderBottom: "1px solid var(--line)", paddingBottom: 14, marginBottom: 14 }}>
                                 <div className="row" style={{ alignItems: "center" }}><strong>Purchase Order pay</strong><span className="badge">Total {money(purchaseOrderDraftTotal(poDraft))}</span></div>
                                 {row.purchaseOrder?.changeRequest ? <p className="error" style={{ margin: "8px 0" }}><strong>Contractor requested:</strong> {row.purchaseOrder.changeRequest}</p> : null}
                                 <div className="grid grid-2" style={{ marginTop: 10 }}>
@@ -3384,7 +3493,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                                   {purchaseOrderPreviewLines(poDraft).map((line, index) => <div key={`${line.label}-${index}`} className="row" style={{ padding: "11px 14px", borderBottom: "1px solid var(--line)", background: line.amount < 0 ? "#fff4f2" : "white" }}><div><strong>{line.label}</strong>{line.detail ? <div className="small muted">{line.detail}</div> : null}</div><strong style={{ color: line.amount < 0 ? "#b42318" : undefined }}>{money(line.amount)}</strong></div>)}
                                   <div className="row" style={{ padding: "14px", background: "#f5faf7", fontSize: 18 }}><strong>Total</strong><strong>{money(purchaseOrderDraftTotal(poDraft))}</strong></div>
                                 </div> : null}
-                              </div>
+                              </div>}
                               <label className="field">
                                 Payroll notes
                                 <textarea

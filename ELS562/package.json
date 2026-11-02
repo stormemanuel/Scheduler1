@@ -10,7 +10,8 @@
     "test:availability": "node tests/availability-client.cjs && node tests/availability-server.cjs",
     "test:updated-schedules": "node tests/updated-schedule.cjs",
     "test:crew-ratings": "node tests/crew-ratings.cjs",
-    "test:purchase-order-review": "node tests/purchase-order-review.cjs"
+    "test:purchase-order-review": "node tests/purchase-order-review.cjs",
+    "test:payroll-scheduling": "node tests/payroll-scheduling.cjs && node tests/payroll-persistence.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.5.2",

@@ -161,6 +161,7 @@ async function purchaseOrderRequest(admin: SupabaseAdmin, token: string) {
 function publicPurchaseOrder(record: NonNullable<Awaited<ReturnType<typeof purchaseOrderRequest>>>) {
   const po = record.purchaseOrder;
   return {
+    paymentTermsDays: po.paymentTermsDays || 30,
     revision: po.revision,
     referenceNumber: po.referenceNumber,
     displayNumber: purchaseOrderDisplayNumber(po),

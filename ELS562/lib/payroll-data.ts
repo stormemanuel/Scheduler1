@@ -1,3 +1,5 @@
+import { isOwnerDrawPayee, isOwnerTechEvent, ownerNotesText, withOwnerTechEvent, applyOwnerPassThrough, ownerDrawTotalForEvent } from "@/lib/owner-draws";
+import { readPayrollSchedule, stripPayrollSchedule, payrollScheduledBy } from "@/lib/payroll-scheduling";
 import { refreshOverduePurchaseOrders } from "@/lib/purchase-order-review";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase-server";
 import { directDepositReadyFromTaxNotes, taxNotesWithoutDirectDepositMarker, type CrewRecord } from "@/lib/crew-types";
@@ -409,7 +411,8 @@ export function buildPayrollRows(options: {
         };
       }
       const key = `${show.id}:${crewId}`;
-      const paymentStatus = normalizePaymentStatus(status?.payment_status, Boolean(status?.paid), status?.scheduled_for);
+      const scheduling = readPayrollSchedule(status?.notes, status?.scheduled_for ?? null);
+      const paymentStatus = scheduling.status ?? normalizePaymentStatus(status?.payment_status, Boolean(status?.paid), scheduling.date);
 
       if (!grouped.has(key)) {
         grouped.set(key, {
@@ -446,9 +449,11 @@ export function buildPayrollRows(options: {
           overrideAmount: status?.payout_override ?? null,
           paid: paymentStatus === "paid",
           paymentStatus,
-          notes: stripPurchaseOrderFromNotes(status?.notes),
+          notes: stripPayrollSchedule(stripPurchaseOrderFromNotes(status?.notes)),
           purchaseOrder: extractPurchaseOrderFromNotes(status?.notes),
-          scheduledFor: status?.scheduled_for ?? null,
+          scheduledFor: scheduling.date,
+          paymentTermsDays: scheduling.netDays,
+          scheduleMode: scheduling.mode,
           statusId: status?.id ?? null,
           showRevenueOverride: financialByShow.get(show.id)?.estimated_revenue_override ?? null,
           showExpenses: financialByShow.get(show.id)?.expenses ?? 0,
@@ -502,9 +507,10 @@ export function buildPayrollRows(options: {
     }
   }
 
-  return [...grouped.values()]
+  return applyOwnerPassThrough([...grouped.values()])
     .map((row) => ({
       ...row,
+      scheduledFor: payrollScheduledBy(row),
       calls: row.calls.sort((a, b) => `${safeText(a.laborDate)} ${safeText(a.startTime)}`.localeCompare(`${safeText(b.laborDate)} ${safeText(b.startTime)}`)),
       estimatedTotal: Math.round(row.estimatedTotal * 100) / 100,
     }))
@@ -512,6 +518,7 @@ export function buildPayrollRows(options: {
 }
 
 export function buildEventSummaries(rows: PayrollCrewShowRow[]): PayrollEventSummary[] {
+  rows = applyOwnerPassThrough(rows);
   const events = new Map<string, PayrollEventSummary>();
 
   for (const row of rows) {
@@ -570,10 +577,12 @@ export function buildEventSummaries(rows: PayrollCrewShowRow[]): PayrollEventSum
       const itemTotal = event.expenseItems.length ? event.expenseItems.reduce((sum, item) => sum + Number(item.amount || 0), 0) : event.expenses;
       const expenses = Math.round(itemTotal * 100) / 100;
       const revenue = Math.round(((event.revenueOverride ?? event.estimatedRevenue) || 0) * 100) / 100;
-      const profit = Math.round((revenue - event.payableTotal - coordinatorCost - expenses) * 100) / 100;
+      const ownerDrawTotal = ownerDrawTotalForEvent({ ...sortedEvent, coordinatorPayment, coordinatorPayments }, payrollRowPayable);
+      const profit = Math.round((revenue - event.payableTotal - coordinatorCost + ownerDrawTotal - expenses) * 100) / 100;
       const positiveProfit = Math.max(0, profit);
       return {
         ...sortedEvent,
+        ownerDrawTotal,
         coordinatorPayment,
         coordinatorPayments,
         estimatedRevenue: revenue,
@@ -697,7 +706,7 @@ function payrollEventIsFullyPaidForSnapshot(event: PayrollEventSummary) {
 function storedPayrollSnapshotEvent(show: ShowRecord, financial?: ShowFinancialRecord | null, latestChecklistCompleted?: boolean | null): PayrollEventSummary | null {
   const snapshot = extractPayrollSnapshotFromNotes(financial?.notes) as StoredPayrollSnapshot | null;
   const event = snapshot?.event;
-  if (!snapshot || !event || typeof event !== "object") return null;
+  if (!snapshot || snapshot.snapshot_version !== 2 || !event || typeof event !== "object") return null;
   if (safeText(snapshot.show_id) && safeText(snapshot.show_id) !== show.id) return null;
   const eventRecord = event as Record<string, unknown>;
   if (!payrollSnapshotEventIsFullyPaid(eventRecord)) return null;
@@ -707,6 +716,7 @@ function storedPayrollSnapshotEvent(show: ShowRecord, financial?: ShowFinancialR
   return {
     ...base,
     rows: [],
+    ownerDrawTotal: numberFromSnapshot(eventRecord.ownerDrawTotal),
     estimatedRevenue: numberFromSnapshot(eventRecord.estimatedRevenue),
     estimatedProfit: numberFromSnapshot(eventRecord.estimatedProfit),
     consecratedHandsDonation: numberFromSnapshot(eventRecord.consecratedHandsDonation),
@@ -729,7 +739,7 @@ function storedPayrollSnapshotEvent(show: ShowRecord, financial?: ShowFinancialR
 
 function payrollSnapshotPayload(event: PayrollEventSummary, source: string, showProcessCycleId?: string | null): StoredPayrollSnapshot {
   return {
-    snapshot_version: 1,
+    snapshot_version: 2,
     show_id: event.showId,
     saved_at: new Date().toISOString(),
     source,
@@ -743,6 +753,7 @@ function payrollSnapshotPayload(event: PayrollEventSummary, source: string, show
       showStart: event.showStart,
       showEnd: event.showEnd,
       showYear: event.showYear,
+      ownerDrawTotal: event.ownerDrawTotal || 0,
       estimatedRevenue: event.estimatedRevenue,
       estimatedProfit: event.estimatedProfit,
       consecratedHandsDonation: event.consecratedHandsDonation,
@@ -768,7 +779,7 @@ function payrollSnapshotPayload(event: PayrollEventSummary, source: string, show
 
 
 function payrollRowPayable(row: PayrollCrewShowRow) {
-  return row.overrideAmount ?? row.estimatedTotal;
+  return row.ownerPassThroughAmount ?? row.overrideAmount ?? row.estimatedTotal;
 }
 
 function coordinatorPaymentsForPayrollEvent(event: PayrollEventSummary): PayrollCoordinatorPaymentSummary[] {
@@ -1868,6 +1879,17 @@ export async function getPayrollPageData(requestedYear?: number, options: { summ
     timer.mark("payroll calculation");
 
     const calculatedEventSummaries = buildEventSummaries(crewRows);
+    // Upgrade existing paid-show summaries once after owner-draw classification
+    // changes. Compare original notes to avoid replacing concurrent finance edits.
+    if (admin && !financialsMissing) for (const event of calculatedEventSummaries) {
+      const financial = ((financialsRes.data || []) as ShowFinancialRecord[]).find((row) => row.show_id === event.showId);
+      const old = extractPayrollSnapshotFromNotes(financial?.notes);
+      if (!financial || !old || old.snapshot_version === 2 || !payrollSnapshotEventIsFullyPaid(event as unknown as Record<string, unknown>)) continue;
+      const upgraded = { ...old, snapshot_version: 2, saved_at: new Date().toISOString(), source: "owner_draw_classification_refresh", event: payrollSnapshotPayload(event, "owner_draw_classification_refresh").event };
+      const saved = await admin.from("show_financials").update({ notes: mergePayrollSnapshotIntoNotes(financial.notes, upgraded) }).eq("show_id", event.showId).eq("notes", financial.notes).select("show_id");
+      if (saved.error) console.warn("Payroll snapshot upgrade could not be saved; using live calculations.");
+    }
+
     const eventSummaryByShow = new Map<string, PayrollEventSummary>();
     for (const show of shows) {
       const financial = financialsMissing

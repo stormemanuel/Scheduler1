@@ -1,3 +1,5 @@
+import { isOwnerDrawPayee } from "@/lib/owner-draws";
+import { readPayrollSchedule, mergePayrollSchedule, stripPayrollSchedule, validPayrollDate } from "@/lib/payroll-scheduling";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase-server";
@@ -38,7 +40,7 @@ async function requireSignedIn() {
 function optionalDate(value: unknown) {
   if (value === null || value === undefined || String(value).trim() === "") return null;
   const clean = String(value).trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) throw new Error("Scheduled-for date must use YYYY-MM-DD format or be blank.");
+  if (!validPayrollDate(clean)) throw new Error("Scheduled-for date must be a valid date with a complete year (YYYY-MM-DD), or blank.");
   return clean;
 }
 
@@ -115,7 +117,7 @@ async function sendPurchaseOrderEmail(args: { to: string; crewName: string; show
   const lines = purchaseOrderLines(args.po);
   const rows = lines.map((line) => `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb"><strong>${escapeHtml(line.label)}</strong>${line.detail ? `<br><span style="color:#64748b">${escapeHtml(line.detail)}</span>` : ""}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right${line.amount < 0 ? ";color:#b42318;font-weight:bold" : ""}">${escapeHtml(money(line.amount))}</td></tr>`).join("");
   const textLines = lines.map((line) => `${line.label}${line.detail ? ` (${line.detail})` : ""}: ${money(line.amount)}`).join("\n");
-  const notice = "Please review this purchase order and either approve it or request changes within 48 hours. If no response is received within 48 hours of delivery, the purchase order will be recorded as approved. Payment terms are Net 30. The approved amount will be scheduled for payment within 30 days.";
+  const notice = `Please review this purchase order and either approve it or request changes within 48 hours. If no response is received within 48 hours of delivery, the purchase order will be recorded as approved. Payment terms are Net ${args.po.paymentTermsDays || 30}. The approved amount will be scheduled for payment within ${args.po.paymentTermsDays || 30} days.`;
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -595,6 +597,9 @@ export async function POST(request: Request) {
       if (action === "save_purchase_order") {
         const crewId = safeText(body.crew_id);
         if (!crewId) return NextResponse.json({ message: "Crew member is required." }, { status: 400 });
+        const payee = await admin.from("crew").select("name").eq("id", crewId).single();
+        if (payee.error) throw new Error(payee.error.message);
+        if (isOwnerDrawPayee(payee.data?.name)) return NextResponse.json({ message: "Storm Leigh is paid as an owner draw, not a contractor Purchase Order." }, { status: 400 });
         const currentRow = await existingPayrollRow(admin, showId, crewId);
         const currentNotes = safeText(currentRow?.notes);
         const existing = extractPurchaseOrderFromNotes(currentNotes);
@@ -607,7 +612,8 @@ export async function POST(request: Request) {
         const baseAmount = days.length ? Math.round(days.reduce((sum, day) => sum + day.defaultAmount, 0) * 100) / 100 : requestedBaseAmount;
         const total = purchaseOrderTotal(baseAmount, adjustments, days);
         const now = new Date().toISOString();
-        const contentChanged = !existing || existing.baseAmount !== baseAmount || JSON.stringify(existing.days) !== JSON.stringify(days) || JSON.stringify(existing.adjustments) !== JSON.stringify(adjustments);
+        const paymentTermsDays = readPayrollSchedule(currentNotes, safeText(currentRow?.scheduled_for) || null).netDays;
+        const contentChanged = !existing || (existing.paymentTermsDays || 30) !== paymentTermsDays || existing.baseAmount !== baseAmount || JSON.stringify(existing.days) !== JSON.stringify(days) || JSON.stringify(existing.adjustments) !== JSON.stringify(adjustments);
         const lockedStatus = existing && !["draft", "ready", "revised", "delivery_failed"].includes(existing.status);
         const revision = existing ? (contentChanged && lockedStatus ? existing.revision + 1 : existing.revision) : 1;
         // Keep one stable contractor review URL across revisions so every
@@ -618,6 +624,7 @@ export async function POST(request: Request) {
         const preserveDelivery = Boolean(existing && lockedStatus && !contentChanged);
         const purchaseOrder: ContractorPurchaseOrder = {
           version: 1,
+          paymentTermsDays,
           token,
           previousTokens: existing?.previousTokens ?? [],
           referenceNumber,
@@ -689,6 +696,11 @@ export async function POST(request: Request) {
       const results: Array<{ crew_id: string; ok: boolean; message: string; purchase_order?: ContractorPurchaseOrder }> = [];
       for (const crewId of crewIds) {
         const crew = crewById.get(crewId);
+        const payee = crewById.get(crewId);
+        if (isOwnerDrawPayee(payee?.name)) {
+          results.push({ crew_id: crewId, ok: false, message: "Storm Leigh is paid as an owner draw, not a contractor Purchase Order." });
+          continue;
+        }
         const currentRow = await existingPayrollRow(admin, showId, crewId);
         const currentNotes = safeText(currentRow?.notes);
         const existing = extractPurchaseOrderFromNotes(currentNotes);
@@ -776,19 +788,21 @@ export async function POST(request: Request) {
 
     const crewId = String(body.crew_id || "").trim();
     if (!showId || !crewId) return NextResponse.json({ message: "Show and crew are required." }, { status: 400 });
-
-    const scheduledFor = optionalDate(body.scheduled_for);
-    const paymentStatus = normalizePaymentStatus(body.payment_status, Boolean(body.paid), scheduledFor);
     const currentRow = await existingPayrollRow(admin, showId, crewId);
+    const saved = readPayrollSchedule(safeText(currentRow?.notes), safeText(currentRow?.scheduled_for) || null);
+    const netDays = body.payment_terms_days === undefined ? saved.netDays : body.payment_terms_days;
+    if (netDays !== 15 && netDays !== 30) throw new Error("Payment terms must be Net 15 or Net 30.");
+    const mode = body.schedule_mode === undefined ? (body.scheduled_for === undefined ? saved.mode : "manual") : body.schedule_mode;
+    if (mode !== "automatic" && mode !== "manual") throw new Error("Invalid schedule mode.");
+    const scheduledFor = body.scheduled_for === undefined ? saved.date : optionalDate(body.scheduled_for);
+    const paymentStatus = normalizePaymentStatus(body.payment_status ?? saved.status ?? currentRow?.payment_status, body.paid === undefined ? Boolean(currentRow?.paid) : Boolean(body.paid), scheduledFor);
+    if (paymentStatus === "scheduled" && !scheduledFor) throw new Error("Choose a valid scheduled-by date before marking Scheduled.");
+    const visibleNotes = body.notes === undefined ? stripPurchaseOrderFromNotes(safeText(currentRow?.notes)) : String(body.notes || "").trim();
     const payload: PayrollPayload = {
-      show_id: showId,
-      crew_id: crewId,
-      role_name: PAYROLL_STATUS_ROLE,
-      pay_type: "Regular",
-      paid: paymentStatus === "paid",
-      payment_status: paymentStatus,
-      payout_override: optionalMoney(body.payout_override),
-      notes: mergePurchaseOrderIntoNotes(String(body.notes || "").trim(), extractPurchaseOrderFromNotes(currentRow?.notes)) || null,
+      show_id: showId, crew_id: crewId, role_name: PAYROLL_STATUS_ROLE, pay_type: "Regular",
+      paid: paymentStatus === "paid", payment_status: paymentStatus,
+      payout_override: body.payout_override === undefined ? (currentRow?.payout_override as number | null) ?? null : optionalMoney(body.payout_override),
+      notes: mergePurchaseOrderIntoNotes(mergePayrollSchedule(visibleNotes, { netDays, mode, date: scheduledFor, status: paymentStatus }), extractPurchaseOrderFromNotes(currentRow?.notes)) || null,
       scheduled_for: scheduledFor,
     };
 
@@ -796,7 +810,7 @@ export async function POST(request: Request) {
     const message = missing.length
       ? `Payroll updated. Run the latest ELS127 SQL to fully enable: ${missing.join(", ")}.`
       : "Payroll status updated.";
-    return NextResponse.json({ ok: true, row: { ...publicRow(data, payload), notes: stripPurchaseOrderFromNotes(data.notes) }, message: `${message}${await payrollSnapshotMessage(showId, "crew_payroll_update")}` });
+    return NextResponse.json({ ok: true, row: { ...publicRow(data, payload), notes: stripPayrollSchedule(stripPurchaseOrderFromNotes(data.notes)), payment_terms_days: netDays, schedule_mode: mode }, message: `${message}${await payrollSnapshotMessage(showId, "crew_payroll_update")}` });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Payroll update failed.";
     if (message.includes('relation "coordinator_payroll" does not exist')) {

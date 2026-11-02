@@ -99,6 +99,9 @@ export type PayrollCrewShowRow = {
   paymentStatus: PayrollPaymentStatus;
   notes: string;
   scheduledFor: string | null;
+  ownerPassThroughAmount?: number;
+  paymentTermsDays?: 15 | 30;
+  scheduleMode?: "automatic" | "manual";
   statusId: string | null;
   purchaseOrder?: ContractorPurchaseOrder | null;
   showRevenueOverride?: number | null;
@@ -131,6 +134,7 @@ export type PayrollCoordinatorPaymentSummary = {
 };
 
 export type PayrollEventSummary = {
+  ownerDrawTotal?: number;
   estimatedRevenue: number;
   estimatedProfit: number;
   consecratedHandsDonation: number;
