@@ -1,3 +1,4 @@
+import { formatCancellationMessage } from "@/lib/cancellation-message";
 import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
 import { availabilityInterval, availabilityOverlaps, availabilityAssignmentActive } from "@/lib/availability-conflicts";
 import { phoneForMessaging } from "@/lib/crew-types";
@@ -527,7 +528,7 @@ function buildCancellationNoticeBody(showName: string, rows: RemovedCrewAssignme
   const first = firstNameFrom(rows[0]?.crew_name);
   const sortedRows = [...rows].sort((a, b) => safeText(a.labor_date).localeCompare(safeText(b.labor_date)) || safeText(a.start_time).localeCompare(safeText(b.start_time)));
   const cancelled = sortedRows.map(cancellationDateTimeLabel);
-  return [
+  return formatCancellationMessage([
     `Hi ${first},`,
     "",
     `Your schedule for ${showName || "this event"} has been canceled:`,
@@ -535,8 +536,7 @@ function buildCancellationNoticeBody(showName: string, rows: RemovedCrewAssignme
     ...(cancelled.length ? cancelled : ["• The removed call"]),
     "",
     "We will be in touch if we get more additions to this call.",
-    "Please confirm this cancellation.",
-  ].join("\n");
+  ].join("\n"));
 }
 
 async function insertCancellationQueueRow(
@@ -3032,7 +3032,7 @@ export async function POST(request: Request) {
           reminder_key: `assignment_cancellation_${randomUUID()}`,
           scheduled_for: nowIso,
           status: "scheduled",
-          body: ensureSenderIdentity(bodyText, senderNameForMessage(auth.user)),
+          body: formatCancellationMessage(ensureSenderIdentity(bodyText, senderNameForMessage(auth.user))),
         };
         const inserted = await insertCancellationQueueRow(admin, queueRow);
         queued.push(inserted);

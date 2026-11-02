@@ -1,5 +1,7 @@
 "use client";
 
+import { formatCancellationMessage } from "@/lib/cancellation-message";
+
 import { Component, Fragment, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { availabilityInterval, availabilityOverlaps } from "@/lib/availability-conflicts";
 import { createPortal } from "react-dom";
@@ -4294,7 +4296,7 @@ function EventsClientInner({
     };
     const buildFallbackMessage = (crewName: string, rows: RemovedCrewAssignmentRecord[]) => {
       const scheduleLines = rows.map(rowMessageLines);
-      return [
+      return formatCancellationMessage([
         `Hi ${firstName(crewName)},`,
         "",
         `Your schedule for ${showLabel} has been canceled:`,
@@ -4302,8 +4304,7 @@ function EventsClientInner({
         ...(scheduleLines.length ? scheduleLines : ["• The removed call"]),
         "",
         "We will be in touch if we get more additions to this call.",
-        "Please confirm this cancellation.",
-      ].join("\n");
+      ].join("\n"));
     };
     cancellationNotices
       .filter((row) => !selectedShow || row.event_id === selectedShow.id)
@@ -4315,7 +4316,7 @@ function EventsClientInner({
         const fallbackMessage = buildFallbackMessage(crewName, nextRows);
         const statusPriority = nextRows.map((item) => normalize(item.cancellation_notice_status || "pending"));
         const status = statusPriority.includes("pending") ? "pending" : statusPriority.includes("queued") ? "queued" : statusPriority.includes("sent") ? "sent" : statusPriority.includes("handled manually") ? "handled_manually" : statusPriority.includes("suppressed") ? "suppressed" : "pending";
-        map.set(key, { key, crewName, phone: row.phone || existing?.phone || "", rows: nextRows, status, message: cancellationNoticeMessages[key] || nextRows.find((item) => item.cancellation_notice_message)?.cancellation_notice_message || fallbackMessage });
+        map.set(key, { key, crewName, phone: row.phone || existing?.phone || "", rows: nextRows, status, message: status === "pending" ? formatCancellationMessage(cancellationNoticeMessages[key] || nextRows.find((item) => item.cancellation_notice_message)?.cancellation_notice_message || fallbackMessage) : (cancellationNoticeMessages[key] || nextRows.find((item) => item.cancellation_notice_message)?.cancellation_notice_message || fallbackMessage) });
       });
     return Array.from(map.values()).sort((a, b) => {
       const statusSort = (value: string) => value === "pending" ? 0 : value === "queued" ? 1 : value === "sent" ? 2 : 3;
