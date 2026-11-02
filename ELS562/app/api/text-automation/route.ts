@@ -1,3 +1,4 @@
+import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
 import { availabilityInterval, availabilityOverlaps, availabilityAssignmentActive } from "@/lib/availability-conflicts";
 import { phoneForMessaging } from "@/lib/crew-types";
 import { NextResponse } from "next/server";
@@ -2826,7 +2827,7 @@ async function sendPurchaseOrderReminderEmail(args: { to: string; name: string; 
     body: JSON.stringify({
       from: `Emanuel Labor Services <payroll@${domain}>`, reply_to: `info@${domain}`, to: [args.to],
       subject: `Reminder: review Purchase Order${reference} for ${args.showName}`,
-      text: `Hello ${args.name},\n\nYour Purchase Order${reference} for ${args.showName} is still awaiting your approval or change request. Total: ${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(args.total)}. Please respond by ${due}. If no response is received within 48 hours of delivery, it will be recorded as approved and payment will be processed for the stated amount.\n\nReview: ${args.link}`,
+      text: `Hello ${args.name},\n\nYour Purchase Order${reference} for ${args.showName} is still awaiting your approval or change request. Total: ${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(args.total)}. Please respond by ${due}. If no response is received within 48 hours of delivery, it will be recorded as approved. Payment terms are Net 30. The approved amount will be scheduled for payment within 30 days.\n\nReview: ${args.link}`,
     }),
   });
   if (!response.ok) throw new Error(`Purchase Order reminder returned HTTP ${response.status}.`);
@@ -2853,9 +2854,8 @@ async function processPurchaseOrderAutomation(admin: NonNullable<ReturnType<type
     const at = now.toISOString();
     if (po.status === "sent_awaiting_delivery" && po.resendEmailId) {
       const event = await resendDeliveryEvent(po.resendEmailId);
-      if (event === "delivered") {
-        const due = new Date(now.getTime() + 48 * 60 * 60 * 1000).toISOString();
-        po = { ...po, status: "delivered", deliveredAt: at, approvalDueAt: due, lastDeliveryEvent: event, updatedAt: at, audit: [...po.audit, { at, action: "delivery_confirmed", detail: `Response due ${due}` }].slice(-60) };
+      if (["delivered", "opened", "clicked"].includes(event)) {
+        po = { ...advancePurchaseOrderReview(po, now, true), lastDeliveryEvent: event };
         stats.delivered += 1;
       } else if (["bounced", "complained", "failed", "canceled"].includes(event)) {
         po = { ...po, status: "delivery_failed", lastDeliveryEvent: event, approvalDueAt: null, updatedAt: at, audit: [...po.audit, { at, action: "delivery_failed", detail: event }].slice(-60) };
@@ -2864,13 +2864,11 @@ async function processPurchaseOrderAutomation(admin: NonNullable<ReturnType<type
         po = { ...po, lastDeliveryEvent: event, updatedAt: at };
       }
     }
+    po = advancePurchaseOrderReview(po, now);
+    if (po.status === "auto_approved" && original.status !== "auto_approved") stats.autoApproved += 1;
     if (po.status === "delivered" && po.approvalDueAt) {
-      const dueMs = new Date(po.approvalDueAt).getTime();
       const deliveredMs = new Date(po.deliveredAt || po.updatedAt).getTime();
-      if (now.getTime() >= dueMs) {
-        po = { ...po, status: "auto_approved", approvedAt: at, updatedAt: at, audit: [...po.audit, { at, action: "auto_approved", detail: "No response within 48 hours of confirmed delivery" }].slice(-60) };
-        stats.autoApproved += 1;
-      } else if (!po.reminderSentAt && now.getTime() >= deliveredMs + 24 * 60 * 60 * 1000) {
+      if (!po.reminderSentAt && now.getTime() >= deliveredMs + 24 * 60 * 60 * 1000) {
         const crew = crewById.get(row.crew_id);
         try {
           await sendPurchaseOrderReminderEmail({ to: safeText(crew?.email), name: safeText(crew?.name) || "Contractor", showName: safeText(showById.get(row.show_id)?.name) || "your event", displayNumber: purchaseOrderDisplayNumber(po), total: po.total, link: `${origin}/onboarding/${encodeURIComponent(po.token)}?mode=purchase_order`, dueAt: po.approvalDueAt });
@@ -2882,7 +2880,7 @@ async function processPurchaseOrderAutomation(admin: NonNullable<ReturnType<type
       }
     }
     if (JSON.stringify(po) !== JSON.stringify(original)) {
-      const update = await admin.from("show_payroll").update({ notes: mergePurchaseOrderIntoNotes(row.notes, po) }).eq("id", row.id);
+      const update = await admin.from("show_payroll").update({ notes: mergePurchaseOrderIntoNotes(row.notes, po) }).eq("id", row.id).eq("notes", row.notes);
       if (update.error) throw new Error(update.error.message);
     }
   }

@@ -1,3 +1,4 @@
+import { refreshOverduePurchaseOrders } from "@/lib/purchase-order-review";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase-server";
 import { directDepositReadyFromTaxNotes, taxNotesWithoutDirectDepositMarker, type CrewRecord } from "@/lib/crew-types";
 import type { ClientCityRateOverrideRecord } from "@/lib/client-types";
@@ -888,7 +889,9 @@ export async function getPayrollIndexData(requestedYear?: number): Promise<Payro
       };
     }
 
-    const readClient = createSupabaseAdminClient() ?? supabase;
+    const admin = createSupabaseAdminClient();
+    if (admin) await refreshOverduePurchaseOrders(admin);
+    const readClient = admin ?? supabase;
     const yearStart = `${loadedYear}-01-01`;
     const nextYearStart = `${loadedYear + 1}-01-01`;
     const showsRes = await readClient
@@ -1064,6 +1067,7 @@ export async function getPayrollSummaryData(requestedYear?: number): Promise<Pay
     }
 
     const admin = createSupabaseAdminClient();
+    if (admin) await refreshOverduePurchaseOrders(admin);
     const readClient = admin ?? supabase;
     const emptyResult = { data: [] as unknown[], error: null };
     const yearStart = `${loadedYear}-01-01`;
@@ -1418,6 +1422,7 @@ export async function getPayrollPageData(requestedYear?: number, options: { summ
     }
 
     const admin = createSupabaseAdminClient();
+    if (admin) await refreshOverduePurchaseOrders(admin);
     const coordinatorReadClient = admin ?? supabase;
     const financialReadClient = admin ?? supabase;
     const emptyResult = { data: [] as unknown[], error: null };

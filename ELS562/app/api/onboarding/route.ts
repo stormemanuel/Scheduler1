@@ -1,3 +1,4 @@
+import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
 import { phoneForMessaging, phoneDigitsForMatch } from "@/lib/crew-types";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
@@ -137,8 +138,17 @@ async function purchaseOrderRequest(admin: SupabaseAdmin, token: string) {
     return purchaseOrder?.token === token || purchaseOrder?.previousTokens?.includes(token);
   });
   if (!match) return null;
-  const purchaseOrder = extractPurchaseOrderFromNotes(match.notes);
+  let purchaseOrder = extractPurchaseOrderFromNotes(match.notes);
   if (!purchaseOrder) return null;
+  const advanced = advancePurchaseOrderReview(purchaseOrder);
+  if (advanced !== purchaseOrder) {
+    const notes = mergePurchaseOrderIntoNotes(match.notes, advanced);
+    const saved = await admin.from("show_payroll").update({ notes }).eq("id", match.id).eq("notes", match.notes).select("id");
+    if (saved.error) throw new Error(saved.error.message);
+    if (!saved.data?.length) return purchaseOrderRequest(admin, token);
+    purchaseOrder = advanced;
+    match.notes = notes;
+  }
   const [showResult, crewResult] = await Promise.all([
     admin.from("shows").select("id,name,client,venue,show_start,show_end").eq("id", match.show_id).maybeSingle(),
     admin.from("crew").select("id,name,email").eq("id", match.crew_id).maybeSingle(),
@@ -183,7 +193,9 @@ async function savePublicPurchaseOrderAction(admin: SupabaseAdmin, body: Record<
   if (po.approvalDueAt && now.getTime() >= new Date(po.approvalDueAt).getTime() && po.status === "delivered") {
     const at = now.toISOString();
     po = { ...po, status: "auto_approved", approvedAt: at, updatedAt: at, audit: [...po.audit, { at, action: "auto_approved", detail: "No response within 48 hours of confirmed delivery" }].slice(-60) };
-    await admin.from("show_payroll").update({ notes: mergePurchaseOrderIntoNotes(record.payrollRow.notes, po) }).eq("id", record.payrollRow.id);
+    const expired = await admin.from("show_payroll").update({ notes: mergePurchaseOrderIntoNotes(record.payrollRow.notes, po) }).eq("id", record.payrollRow.id).eq("notes", record.payrollRow.notes).select("id");
+    if (expired.error) throw new Error(expired.error.message);
+    if (!expired.data?.length) return NextResponse.json({ message: "This Purchase Order changed. Refresh the page before responding." }, { status: 409 });
     return NextResponse.json({ message: "The 48-hour review period has ended and this Purchase Order is already recorded as approved.", purchase_order: publicPurchaseOrder({ ...record, purchaseOrder: po }) }, { status: 409 });
   }
   if (po.status !== "delivered" && po.status !== "sent_awaiting_delivery") {
@@ -198,8 +210,9 @@ async function savePublicPurchaseOrderAction(admin: SupabaseAdmin, body: Record<
     if (!requestText) return NextResponse.json({ message: "Tell us what needs to be changed." }, { status: 400 });
     po = { ...po, status: "changes_requested", changeRequestedAt: at, changeRequest: requestText, updatedAt: at, audit: [...po.audit, { at, action: "changes_requested", detail: requestText }].slice(-60) };
   }
-  const update = await admin.from("show_payroll").update({ notes: mergePurchaseOrderIntoNotes(record.payrollRow.notes, po) }).eq("id", record.payrollRow.id);
+  const update = await admin.from("show_payroll").update({ notes: mergePurchaseOrderIntoNotes(record.payrollRow.notes, po) }).eq("id", record.payrollRow.id).eq("notes", record.payrollRow.notes).select("id");
   if (update.error) throw new Error(update.error.message);
+  if (!update.data?.length) return NextResponse.json({ message: "This Purchase Order changed. Refresh the page before responding." }, { status: 409 });
   return NextResponse.json({ ok: true, purchase_order: publicPurchaseOrder({ ...record, purchaseOrder: po }), message: action === "approve_purchase_order" ? "Purchase Order approved. Thank you." : "Your change request was sent to Emanuel Labor Services." });
 }
 
@@ -4212,8 +4225,10 @@ export async function POST(request: Request) {
         let purchaseOrder = purchaseOrderRecord.purchaseOrder;
         const now = new Date().toISOString();
         if (!purchaseOrder.audit.some((event) => event.action === "contractor_opened")) {
-          purchaseOrder = { ...purchaseOrder, updatedAt: now, audit: [...purchaseOrder.audit, { at: now, action: "contractor_opened" }].slice(-60) };
-          await admin.from("show_payroll").update({ notes: mergePurchaseOrderIntoNotes(purchaseOrderRecord.payrollRow.notes, purchaseOrder) }).eq("id", purchaseOrderRecord.payrollRow.id);
+          purchaseOrder = advancePurchaseOrderReview({ ...purchaseOrder, updatedAt: now, audit: [...purchaseOrder.audit, { at: now, action: "contractor_opened" }].slice(-60) });
+          const opened = await admin.from("show_payroll").update({ notes: mergePurchaseOrderIntoNotes(purchaseOrderRecord.payrollRow.notes, purchaseOrder) }).eq("id", purchaseOrderRecord.payrollRow.id).eq("notes", purchaseOrderRecord.payrollRow.notes).select("id");
+          if (opened.error) throw new Error(opened.error.message);
+          if (!opened.data?.length) return NextResponse.json({ message: "This Purchase Order changed. Please reopen the link." }, { status: 409 });
         }
         return NextResponse.json({ ok: true, request_type: "purchase_order", canonical_token: purchaseOrder.token, purchase_order: publicPurchaseOrder({ ...purchaseOrderRecord, purchaseOrder }) });
       }

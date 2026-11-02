@@ -115,7 +115,7 @@ async function sendPurchaseOrderEmail(args: { to: string; crewName: string; show
   const lines = purchaseOrderLines(args.po);
   const rows = lines.map((line) => `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb"><strong>${escapeHtml(line.label)}</strong>${line.detail ? `<br><span style="color:#64748b">${escapeHtml(line.detail)}</span>` : ""}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right${line.amount < 0 ? ";color:#b42318;font-weight:bold" : ""}">${escapeHtml(money(line.amount))}</td></tr>`).join("");
   const textLines = lines.map((line) => `${line.label}${line.detail ? ` (${line.detail})` : ""}: ${money(line.amount)}`).join("\n");
-  const notice = "Please review this purchase order and either approve it or request changes within 48 hours. If no response is received within 48 hours of delivery, the purchase order will be recorded as approved and payment will be processed for the stated amount.";
+  const notice = "Please review this purchase order and either approve it or request changes within 48 hours. If no response is received within 48 hours of delivery, the purchase order will be recorded as approved. Payment terms are Net 30. The approved amount will be scheduled for payment within 30 days.";
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
