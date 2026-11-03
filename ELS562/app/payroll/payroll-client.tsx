@@ -1,5 +1,7 @@
 "use client";
 
+import { calculateCoordinatorPayments } from "@/lib/coordinator-payments";
+
 import { isOwnerDrawPayee, isOwnerTechEvent, ownerNotesText, withOwnerTechEvent, applyOwnerPassThrough, ownerDrawTotalForEvent, paidOwnerDrawsForEvent } from "@/lib/owner-draws";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
@@ -627,66 +629,7 @@ function payable(row: PayrollCrewShowRow, draft?: PurchaseOrderDraft) {
 }
 
 function coordinatorPaymentsForEvent(event: PayrollEventSummary): PayrollCoordinatorPaymentSummary[] {
-  const grouped = new Map<string, PayrollCoordinatorPaymentSummary>();
-  for (const row of event.rows) {
-    for (const call of row.calls) {
-      if (call.coordinationFeeWaived) continue;
-      const coordinatorUserId = call.coordinationOwnerUserId || row.showAssignedCoordinatorUserId || null;
-      if (!coordinatorUserId) continue;
-      const key = coordinatorUserId;
-      const label = String(call.payLabel || "").toLowerCase();
-      const isHalf = label.includes("half") || (call.durationHours !== null && call.durationHours <= 5);
-      const existing = grouped.get(key) ?? {
-        showId: event.showId,
-        coordinatorUserId,
-        coordinatorName: call.coordinationOwnerName || row.showAssignedCoordinatorName || "Coordinator",
-        fullDayTechDays: 0,
-        halfDayTechs: 0,
-        projectedAmount: 0,
-        overrideAmount: call.coordinationOverrideAmount ?? (coordinatorUserId === row.showAssignedCoordinatorUserId ? row.coordinatorOverrideAmount ?? null : null),
-        payableAmount: 0,
-        paymentStatus: (call.coordinationPaymentStatus === "paid" || call.coordinationPaymentStatus === "scheduled" ? call.coordinationPaymentStatus : coordinatorUserId === row.showAssignedCoordinatorUserId ? row.coordinatorPaymentStatus ?? "unpaid" : "unpaid"),
-        paid: Boolean(call.coordinationPaid || (coordinatorUserId === row.showAssignedCoordinatorUserId && row.coordinatorPaid)),
-        scheduledFor: call.coordinationScheduledFor ?? (coordinatorUserId === row.showAssignedCoordinatorUserId ? row.coordinatorScheduledFor ?? null : null),
-        notes: call.coordinationNotes ?? (coordinatorUserId === row.showAssignedCoordinatorUserId ? row.coordinatorNotes ?? "" : ""),
-        statusId: call.coordinationPaymentStatusId ?? (coordinatorUserId === row.showAssignedCoordinatorUserId ? row.coordinatorPaymentStatusId ?? null : null),
-        rateSchedule: call.coordinationRateSchedule ?? (coordinatorUserId === row.showAssignedCoordinatorUserId ? row.coordinatorRateSchedule ?? null : null),
-      };
-      if (isHalf) existing.halfDayTechs += 1;
-      else existing.fullDayTechDays += 1;
-      const projectedAmount = estimateCoordinatorCompensation(existing.fullDayTechDays, existing.halfDayTechs, existing.rateSchedule).total;
-      existing.projectedAmount = projectedAmount;
-      existing.payableAmount = existing.overrideAmount ?? projectedAmount;
-      grouped.set(key, existing);
-    }
-  }
-  const assignedCoordinatorRow = event.rows.find((row) => row.showAssignedCoordinatorUserId);
-  const assignedCoordinatorId = assignedCoordinatorRow?.showAssignedCoordinatorUserId || "";
-  if (assignedCoordinatorId && !grouped.has(assignedCoordinatorId)) {
-    const projectedAmount = estimateCoordinatorCompensation(0, 0, assignedCoordinatorRow?.coordinatorRateSchedule).total;
-    const overrideAmount = assignedCoordinatorRow?.coordinatorOverrideAmount ?? null;
-    grouped.set(assignedCoordinatorId, {
-      showId: event.showId,
-      coordinatorUserId: assignedCoordinatorId,
-      coordinatorName: assignedCoordinatorRow?.showAssignedCoordinatorName || "Assigned coordinator",
-      fullDayTechDays: 0,
-      halfDayTechs: 0,
-      projectedAmount,
-      overrideAmount,
-      payableAmount: overrideAmount ?? projectedAmount,
-      paymentStatus: assignedCoordinatorRow?.coordinatorPaymentStatus ?? "unpaid",
-      paid: Boolean(assignedCoordinatorRow?.coordinatorPaid),
-      scheduledFor: assignedCoordinatorRow?.coordinatorScheduledFor ?? null,
-      notes: assignedCoordinatorRow?.coordinatorNotes ?? "",
-      statusId: assignedCoordinatorRow?.coordinatorPaymentStatusId ?? null,
-      rateSchedule: assignedCoordinatorRow?.coordinatorRateSchedule ?? null,
-    });
-  }
-  return [...grouped.values()].sort((a, b) => {
-    const aAssigned = a.coordinatorUserId === assignedCoordinatorId ? 0 : 1;
-    const bAssigned = b.coordinatorUserId === assignedCoordinatorId ? 0 : 1;
-    return aAssigned - bAssigned || a.coordinatorName.localeCompare(b.coordinatorName);
-  });
+  return calculateCoordinatorPayments(event);
 }
 
 function coordinatorPaymentForEvent(event: PayrollEventSummary): PayrollCoordinatorPaymentSummary | null {
@@ -1859,8 +1802,24 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
     setRows((current) => current.map((row) => (row.key === rowKey ? { ...row, ...patch } : row)));
   }
 
-  function updateLocalCoordinator(showId: string, patch: Partial<PayrollCrewShowRow>) {
-    setRows((current) => current.map((row) => (row.showId === showId ? { ...row, ...patch } : row)));
+  function updateLocalCoordinator(showId: string, patch: Partial<PayrollCrewShowRow>, coordinatorUserId?: string) {
+    setRows((current) => current.map((row) => {
+      if (row.showId !== showId) return row;
+      const ownerId = coordinatorUserId || row.showAssignedCoordinatorUserId;
+      return {
+        ...row,
+        ...(!coordinatorUserId || row.showAssignedCoordinatorUserId === coordinatorUserId ? patch : {}),
+        calls: row.calls.map((call) => (call.coordinationOwnerUserId || row.showAssignedCoordinatorUserId) !== ownerId ? call : {
+          ...call,
+          ...(patch.coordinatorOverrideAmount !== undefined ? { coordinationOverrideAmount: patch.coordinatorOverrideAmount } : {}),
+          ...(patch.coordinatorPaymentStatus !== undefined ? { coordinationPaymentStatus: patch.coordinatorPaymentStatus } : {}),
+          ...(patch.coordinatorPaid !== undefined ? { coordinationPaid: patch.coordinatorPaid } : {}),
+          ...(patch.coordinatorScheduledFor !== undefined ? { coordinationScheduledFor: patch.coordinatorScheduledFor } : {}),
+          ...(patch.coordinatorNotes !== undefined ? { coordinationNotes: patch.coordinatorNotes } : {}),
+          ...(patch.coordinatorPaymentStatusId !== undefined ? { coordinationPaymentStatusId: patch.coordinatorPaymentStatusId } : {}),
+        }),
+      };
+    }));
   }
 
   async function saveCoordinatorPayment(event: PayrollEventSummary, changes: Partial<{ payment_status: PayrollPaymentStatus; paid: boolean; scheduled_for: string | null; payout_override: number | null; notes: string }>) {
@@ -1900,7 +1859,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
         coordinatorOverrideAmount: result.row?.payout_override ?? null,
         coordinatorNotes: result.row?.notes ?? "",
         coordinatorPaymentStatusId: result.row?.id ?? current.statusId,
-      });
+      }, current.coordinatorUserId);
       setMessage(`Updated coordinator payment for ${event.showName}.`);
       return true;
     } catch (error) {
@@ -3014,6 +2973,10 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                     <div className="small muted">
                       {event.coordinatorPayment.coordinatorName} · {event.coordinatorPayment.fullDayTechDays} full-day tech-days · {event.coordinatorPayment.halfDayTechs} half-day techs{event.coordinatorPayment.alternateUnusedDays ? ` · ${event.coordinatorPayment.alternateUnusedDays} unused alternate day${event.coordinatorPayment.alternateUnusedDays === 1 ? "" : "s"} at $10` : ""}
                     </div>
+                    <div className="small" style={{ marginTop: 4 }}>
+                      {event.coordinatorPayment.rateSchedule ? "Saved coordinator agreement" : "No saved agreement found — default rates"} · Agreement estimate: {money(event.coordinatorPayment.projectedAmount)}
+                      {event.coordinatorPayment.overrideAmount !== null ? ` · Manual event override: ${money(event.coordinatorPayment.overrideAmount)}` : ""}
+                    </div>
                     {coordinatorFeeWaived(event.coordinatorPayment) ? (
                       <div className="small" style={{ marginTop: 4 }}>
                         <strong>Waived:</strong> this coordinator fee is not deducted from contract labor or P&amp;L expenses.
@@ -3050,6 +3013,11 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                       })}
                     />
                   </label>
+                  {event.coordinatorPayment.overrideAmount !== null ? <button className="ghost" type="button" disabled={savingKey === `coordinator:${event.showId}`} onClick={async () => {
+                    const wasWaived = coordinatorFeeWaived(event.coordinatorPayment);
+                    const ok = await saveCoordinatorPayment(event, { payout_override: null, ...(wasWaived ? { payment_status: "unpaid" as const, paid: false, scheduled_for: null, notes: removeWaiverNote(event.coordinatorPayment?.notes) } : {}) });
+                    if (ok) setMoneyDrafts((current) => { const next = { ...current }; delete next[`coordinator:${event.showId}`]; return next; });
+                  }}>Use agreement rates</button> : null}
                   <label className="field" style={{ minWidth: 160 }}>
                     Scheduled for
                     <input

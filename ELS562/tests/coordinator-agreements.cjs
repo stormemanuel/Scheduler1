@@ -1,0 +1,54 @@
+const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('node:assert/strict'),ts=require('typescript');
+const root=path.resolve(__dirname,'..');
+function load(file,mocks={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,{exports,require:name=>{if(!(name in mocks))throw new Error(name);return mocks[name]}});return exports;}
+const calc=load('lib/payroll-calculations.ts',{'@/lib/rates-types':{halfDayFromFullDay:v=>v/2}});
+const {resolveCoordinatorAgreements,loadCoordinatorAgreements}=load('lib/coordinator-agreements.ts',{'@/lib/payroll-calculations':calc});
+const {calculateCoordinatorPayments}=load('lib/coordinator-payments.ts',{'@/lib/payroll-calculations':calc});
+const fields=['full_day_rate_1_20','full_day_rate_21_35','full_day_rate_36_50','full_day_rate_51_plus','half_day_rate_1_49','half_day_rate_50_plus'];
+const custom=Object.fromEntries(fields.map((f,i)=>[f,40+i]));
+const account={id:'auth',email:'coordinator@example.com',user_metadata:{full_name:'Coordinator Name',els_coordinator_compensation:custom}};
+const profile={id:'legacy',email:'COORDINATOR@example.com',full_name:'Coordinator Name'};
+let passed=0;function check(name,test){test();passed++;console.log('PASS '+name);}
+let map=resolveCoordinatorAgreements([{coordinator_user_id:'auth',...calc.DEFAULT_COORDINATOR_COMPENSATION}], [profile], [account]);
+check('saved account agreement overrides stale/default table rates',()=>assert.equal(map.get('auth').full_day_rate_1_20,40));
+check('legacy profile ID resolves the linked account agreement',()=>assert.equal(map.get('legacy').full_day_rate_1_20,40));
+check('legacy user_id table schema supported without account metadata',()=>assert.equal(resolveCoordinatorAgreements([{user_id:'legacy',...custom}],[profile],[]).get('legacy').full_day_rate_1_20,40));
+check('duplicate default table row does not replace customized rates',()=>assert.equal(resolveCoordinatorAgreements([{coordinator_user_id:'legacy',...custom},{coordinator_user_id:'legacy',...calc.DEFAULT_COORDINATOR_COMPENSATION}],[],[]).get('legacy').full_day_rate_1_20,40));
+check('intentional zero-dollar account agreement preserved',()=>assert.equal(resolveCoordinatorAgreements([{coordinator_user_id:'auth',...custom}],[],[{...account,user_metadata:{els_coordinator_compensation:Object.fromEntries(fields.map(f=>[f,0]))}}]).get('auth').full_day_rate_1_20,0));
+check('intentional reset to defaults beats stale customized table rates',()=>assert.equal(resolveCoordinatorAgreements([{coordinator_user_id:'auth',...custom}],[],[{...account,user_metadata:{els_coordinator_compensation:calc.DEFAULT_COORDINATOR_COMPENSATION}}]).get('auth').full_day_rate_1_20,calc.DEFAULT_COORDINATOR_COMPENSATION.full_day_rate_1_20));
+check('matching name with a different email cannot borrow an agreement',()=>assert.equal(resolveCoordinatorAgreements([],[{...profile,email:'different@example.com'}],[account]).has('legacy'),false));
+check('ambiguous names without emails do not borrow agreements',()=>assert.equal(resolveCoordinatorAgreements([],[{...profile,email:null}],[account,{...account,id:'other',email:'other@example.com'}]).has('legacy'),false));
+check('unique name supports legacy profile without email',()=>assert.equal(resolveCoordinatorAgreements([],[{...profile,email:null}],[account]).get('legacy').full_day_rate_1_20,40));
+const agreement=map.get('legacy');
+function event(overrides={}){const calls=[...Array.from({length:21},(_,i)=>({coordinationOwnerUserId:'legacy',coordinationOwnerName:'Coordinator Name',durationHours:10,payLabel:'Full day',roleName:'Stagehand',status:'confirmed',coordinationRateSchedule:agreement})),{coordinationOwnerUserId:'legacy',durationHours:5,payLabel:'Half day',roleName:'Stagehand',status:'confirmed',coordinationRateSchedule:agreement}];return{showId:'show',rows:[{showId:'show',showAssignedCoordinatorUserId:'legacy',showAssignedCoordinatorName:'Coordinator Name',coordinatorRateSchedule:agreement,calls,...overrides}]};}
+check('full-day tier agreement and half-day agreement reach Payroll payable',()=>{const payment=calculateCoordinatorPayments(event())[0];assert.equal(payment.projectedAmount,20*40+41+44);assert.equal(payment.payableAmount,payment.projectedAmount);});
+check('manual event payout remains explicit override',()=>assert.equal(calculateCoordinatorPayments(event({coordinatorOverrideAmount:123}))[0].payableAmount,123));
+check('clearing event override restores agreement calculation',()=>assert.equal(calculateCoordinatorPayments(event({coordinatorOverrideAmount:null}))[0].payableAmount,20*40+41+44));
+check('waived or replaced assignments do not earn another booking fee',()=>{const e=event();e.rows[0].calls[0].coordinationFeeWaived=true;e.rows[0].calls[1].status='no_show_replaced';e.rows[0].calls[2].status='called_in_replacement_used';assert.equal(calculateCoordinatorPayments(e)[0].fullDayTechDays,18);});
+check('unused onsite alternate credit remains $10 rather than full-day rate',()=>{const e=event();e.rows[0].calls=[{roleName:'On-site Replacement',durationHours:10,status:'confirmed',coordinationRateSchedule:agreement}];const payment=calculateCoordinatorPayments(e)[0];assert.equal(payment.projectedAmount,10);assert.equal(payment.fullDayTechDays,0);});
+check('admin-owned booking uses its owner agreement rather than event coordinator',()=>{const e=event();e.rows[0].calls=[{coordinationOwnerUserId:'admin',coordinationOwnerName:'Admin',durationHours:10,status:'confirmed',coordinationRateSchedule:{...agreement,full_day_rate_1_20:70}}];const payment=calculateCoordinatorPayments(e).find(p=>p.coordinatorUserId==='admin');assert.equal(payment.projectedAmount,70);});
+const clientSource=fs.readFileSync(path.join(root,'app/payroll/payroll-client.tsx'),'utf8');
+const clientAst=ts.createSourceFile('client.tsx',clientSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let updateFunction,resetHandler;
+function findUpdate(node){
+ if(ts.isJsxElement(node)&&node.openingElement.tagName.getText(clientAst)==='button'&&node.children.some(child=>ts.isJsxText(child)&&child.text.includes('Use agreement rates'))){const prop=node.openingElement.attributes.properties.find(p=>p.name?.getText(clientAst)==='onClick');resetHandler=prop.initializer.expression.getText(clientAst);}
+ if(ts.isFunctionDeclaration(node)&&node.name?.text==='updateLocalCoordinator')updateFunction=node.getText(clientAst);ts.forEachChild(node,findUpdate);}findUpdate(clientAst);
+let localRows=event({coordinatorOverrideAmount:123}).rows;localRows[0].calls[0].coordinationOverrideAmount=123;
+const context=vm.createContext({setRows:update=>{localRows=update(localRows)}});
+vm.runInContext(ts.transpileModule(updateFunction,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context);
+vm.runInContext('updateLocalCoordinator("show",{coordinatorOverrideAmount:null},"legacy")',context);
+check('Use agreement rates clears cached call override immediately',()=>assert.equal(calculateCoordinatorPayments({showId:'show',rows:localRows})[0].payableAmount,20*40+41+44));
+localRows[0].calls.push({coordinationOwnerUserId:'admin',coordinationOverrideAmount:99});
+vm.runInContext('updateLocalCoordinator("show",{coordinatorOverrideAmount:0,coordinatorPaymentStatus:"paid",coordinatorPaid:true},"legacy")',context);
+check('coordinator payment changes preserve other booking-owner overrides',()=>assert.equal(localRows[0].calls.at(-1).coordinationOverrideAmount,99));
+check('waived zero and paid status propagate to matching cached calls',()=>{assert.equal(localRows[0].calls[0].coordinationOverrideAmount,0);assert.equal(localRows[0].calls[0].coordinationPaid,true);});
+(async()=>{
+ let restored;
+ const resetContext=vm.createContext({event:{coordinatorPayment:{notes:'Coordinator fee waived by admin.'}},coordinatorFeeWaived:()=>true,removeWaiverNote:()=>'',saveCoordinatorPayment:async(_,changes)=>{restored=changes;return true},setMoneyDrafts:()=>{}});
+ vm.runInContext(ts.transpileModule('const result=('+resetHandler+')();',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,resetContext);await vm.runInContext('result',resetContext);
+ check('restoring waived agreement does not mark newly owed money paid',()=>{assert.equal(restored.payout_override,null);assert.equal(restored.payment_status,'unpaid');assert.equal(restored.paid,false);});
+ let pages=[];const profiles=[profile];const admin={from:()=>({select(){return this},order(){return this},range:async()=>({data:profiles,error:null})}),auth:{admin:{listUsers:async({page})=>{pages.push(page);return{data:{users:page===1?Array.from({length:1000},(_,i)=>({id:'other'+i})): [account]},error:null}}}}};
+ const loaded=await loadCoordinatorAgreements(admin,[]);check('Auth pagination loads agreement beyond first 1000 users',()=>{assert.equal(pages.length,2);assert.equal(loaded.get('legacy').full_day_rate_1_20,40);});
+ admin.auth.admin.listUsers=async()=>({data:{users:[]},error:{message:'denied'}});
+ await assert.rejects(()=>loadCoordinatorAgreements(admin,[]),/Cannot load saved coordinator agreements/);passed++;console.log('PASS account read failures do not silently calculate unverified default pay');
+ console.log(passed+' coordinator agreement checks passed; no live agreements or payroll records changed.');
+})().catch(error=>{console.error(error);process.exitCode=1});
