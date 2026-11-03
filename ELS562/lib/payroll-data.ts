@@ -1,3 +1,4 @@
+import { readPayrollFinancials } from "@/lib/payroll-financials";
 import { calculateCoordinatorPayments } from "@/lib/coordinator-payments";
 import { loadCoordinatorAgreements } from "@/lib/coordinator-agreements";
 import { isOwnerDrawPayee, isOwnerTechEvent, ownerNotesText, withOwnerTechEvent, applyOwnerPassThrough, ownerDrawTotalForEvent } from "@/lib/owner-draws";
@@ -885,13 +886,7 @@ export async function getPayrollIndexData(requestedYear?: number): Promise<Payro
 
     const showIds = shows.map((show) => show.id).filter(Boolean);
     const [financialsRes, checklistRes] = await Promise.all([
-      showIds.length
-        ? readClient
-          .from("show_financials")
-          .select("show_id, estimated_revenue_override, expenses, notes, tax_reserve_done, tax_reserve_done_at, consecrated_hands_done, consecrated_hands_done_at, created_at, updated_at")
-          .in("show_id", showIds)
-          .limit(5000)
-        : Promise.resolve({ data: [] as unknown[], error: null as any }),
+      readPayrollFinancials(readClient, showIds),
       showIds.length
         ? readClient
           .from("show_process_checklists")
@@ -1117,9 +1112,7 @@ export async function getPayrollSummaryData(requestedYear?: number, options: { s
       showIds.length
         ? fetchChunked("show_payroll", "id, show_id, crew_id, role_name, paid, payment_status, payout_override, notes, scheduled_for", "show_id", showIds, 100)
         : Promise.resolve(emptyResult),
-      showIds.length
-        ? fetchChunked("show_financials", "id, show_id, estimated_revenue_override, expenses, notes, tax_reserve_done, tax_reserve_done_at, consecrated_hands_done, consecrated_hands_done_at, created_at, updated_at", "show_id", showIds, 100)
-        : Promise.resolve(emptyResult),
+      readPayrollFinancials(readClient, showIds),
       showIds.length
         ? fetchChunked("coordinator_payroll", "id, show_id, coordinator_user_id, paid, payment_status, payout_override, notes, scheduled_for", "show_id", showIds, 100)
         : Promise.resolve(emptyResult),
@@ -1446,9 +1439,7 @@ export async function getPayrollPageData(requestedYear?: number, options: { summ
       showIds.length
         ? readClient.from("show_payroll").select("id, show_id, crew_id, paid, payment_status, payout_override, notes, scheduled_for").in("show_id", showIds).limit(10000)
         : Promise.resolve(emptyResult),
-      showIds.length
-        ? financialReadClient.from("show_financials").select("id, show_id, estimated_revenue_override, expenses, notes, tax_reserve_done, tax_reserve_done_at, consecrated_hands_done, consecrated_hands_done_at, created_at, updated_at").in("show_id", showIds).limit(5000)
-        : Promise.resolve(emptyResult),
+      readPayrollFinancials(financialReadClient, showIds),
       options.summaryOnly
         ? Promise.resolve(emptyResult)
         : readClient.from("profiles").select("id, email, full_name").limit(1000),
@@ -1476,33 +1467,6 @@ export async function getPayrollPageData(requestedYear?: number, options: { summ
         .limit(1000);
     }
     timer.mark("payroll graph/status/rates");
-
-    const financialsIdColumnMissing = Boolean(financialsRes.error && (
-      safeText(financialsRes.error.message).includes("show_financials.id") ||
-      safeText(financialsRes.error.message).includes("column show_financials.id does not exist") ||
-      safeText(financialsRes.error.message).includes("schema cache")
-    ));
-    if (financialsIdColumnMissing && showIds.length) {
-      financialsRes = await financialReadClient
-        .from("show_financials")
-        .select("show_id, estimated_revenue_override, expenses, notes, tax_reserve_done, tax_reserve_done_at, consecrated_hands_done, consecrated_hands_done_at, created_at, updated_at")
-        .in("show_id", showIds)
-        .limit(5000);
-    }
-    const financialsOptionalColumnsMissing = Boolean(financialsRes.error && (
-      safeText(financialsRes.error.message).includes("tax_reserve_done") ||
-      safeText(financialsRes.error.message).includes("consecrated_hands_done") ||
-      safeText(financialsRes.error.message).includes("created_at") ||
-      safeText(financialsRes.error.message).includes("updated_at") ||
-      safeText(financialsRes.error.message).includes("schema cache")
-    ));
-    if (financialsOptionalColumnsMissing && showIds.length) {
-      financialsRes = await financialReadClient
-        .from("show_financials")
-        .select("show_id, estimated_revenue_override, expenses, notes")
-        .in("show_id", showIds)
-        .limit(5000);
-    }
 
     const payrollStatusColumnsMissing = Boolean(payrollRes.error && (
       safeText(payrollRes.error.message).includes("payment_status") ||
