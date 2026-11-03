@@ -1,4 +1,5 @@
 "use client";
+import { CoordinatorBookingDetails } from "./coordinator-booking-details";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PayrollEventSummary } from "@/lib/payroll-types";
 import type { CoordinatorOrderRow, CoordinatorOrderQuote } from "@/lib/coordinator-purchase-order-types";
@@ -97,7 +98,7 @@ export default function CoordinatorPurchaseOrders({ events, year }: { events: Pa
         {!choices.length ? <p className="muted">No unpaid coordinator balances loaded for this year. Load the show's Payroll details to include it.</p> : null}
         <button type="button" className="ghost" style={{ marginTop: 12 }} disabled={busy || !selected.length} onClick={() => void act("preview")}>Preview {selected.length || "selected"} shows</button>
       </> : <p className="muted">Storm Leigh's owner draws are handled separately.</p>}
-      {preview ? <div className="card compact" style={{ marginTop: 14 }}><h3>{preview.quote.coordinatorName} — combined Purchase Order</h3>{preview.quote.lines.map((line) => <div className="row" key={line.showId}><span>{line.showName}</span><strong>{money(line.amount)}</strong></div>)}<div className="row" style={{ marginTop: 12 }}><strong>Total · Net {netDays}</strong><strong>{money(preview.quote.total)}</strong></div><button type="button" className="primary" disabled={busy} onClick={() => void act("create")}>Create combined Purchase Order</button></div> : null}
+      {preview ? <div className="card compact" style={{ marginTop: 14 }}><h3>{preview.quote.coordinatorName} — combined Purchase Order</h3>{preview.quote.lines.map((line) => <div className="row" key={line.showId}><div><strong>{line.showName}</strong><CoordinatorBookingDetails line={line} /></div><strong>{money(line.amount)}</strong></div>)}<div className="row" style={{ marginTop: 12 }}><strong>Total · Net {netDays}</strong><strong>{money(preview.quote.total)}</strong></div><button type="button" className="primary" disabled={busy} onClick={() => void act("create")}>Create combined Purchase Order</button></div> : null}
       {activeOrder && ["ready", "revised", "delivery_failed"].includes(activeOrder.document.status) ? <div className="card compact" style={{ marginTop: 14, border: "2px solid #0f5f3d" }}>
         <strong>{activeOrder.document.referenceNumber}-R{activeOrder.document.revision} is ready to send</strong>
         <p>Email {activeOrder.document.coordinatorName} at {activeOrder.document.coordinatorEmail} with the combined {money(activeOrder.document.total)} Purchase Order and approval link.</p>

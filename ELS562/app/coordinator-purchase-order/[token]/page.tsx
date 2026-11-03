@@ -1,4 +1,5 @@
 "use client";
+import { CoordinatorBookingDetails } from "@/app/payroll/coordinator-booking-details";
 import { use, useEffect, useState } from "react";
 import type { PublicCoordinatorOrder } from "@/lib/coordinator-purchase-orders";
 const money = (amount: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
@@ -36,7 +37,7 @@ export default function CoordinatorOrderReview({ params }: { params: Promise<{ t
     {!order && !error ? <p>Loading your Purchase Order…</p> : null}
     {order ? <>
       <strong>{order.referenceNumber}-R{order.revision}</strong><p>Hello {order.coordinatorName}, please review the coordinator pay for these shows.</p>
-      <div className="mobile-table" style={{ overflowX: "auto" }}><table style={{ width: "100%" }}><thead><tr><th style={{ textAlign: "left" }}>Show</th><th>Coordinator pay</th></tr></thead><tbody>{order.showLines.map((line) => <tr key={line.showId}><td style={{ padding: "12px 0" }}><strong>{line.showName}</strong><div className="small muted">{line.showStart} to {line.showEnd} · {line.fullDays} full-day / {line.halfDays} half-day{line.alternateDays ? ` · ${line.alternateDays} unused alternate days` : ""}</div></td><td style={{ textAlign: "right" }}>{money(line.amount)}</td></tr>)}</tbody></table></div>
+      <div className="mobile-table" style={{ overflowX: "auto" }}><table style={{ width: "100%" }}><thead><tr><th style={{ textAlign: "left" }}>Show</th><th>Coordinator pay</th></tr></thead><tbody>{order.showLines.map((line) => <tr key={line.showId}><td style={{ padding: "12px 0" }}><strong>{line.showName}</strong><div className="small muted">{line.showStart} to {line.showEnd} · {line.fullDays} full-day / {line.halfDays} half-day{line.alternateDays ? ` · ${line.alternateDays} unused alternate days` : ""}</div><CoordinatorBookingDetails line={line} /></td><td style={{ textAlign: "right" }}>{money(line.amount)}</td></tr>)}</tbody></table></div>
       <div className="row" style={{ marginTop: 12 }}><strong>Total</strong><strong>{money(order.total)}</strong></div>
       <p className="badge">{order.status.replaceAll("_", " ")}</p>
       <p>Please approve this Purchase Order or request changes within 48 hours of delivery. If no response is received, it will be recorded as approved. Payment terms are Net {order.paymentTermsDays}. The approved amount will be scheduled for payment within {order.paymentTermsDays} days.</p>

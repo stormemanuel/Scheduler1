@@ -311,6 +311,7 @@ export function buildPayrollRows(options: {
   subCalls: SubCallRecord[];
   assignments: AssignmentRecord[];
   crewRecords: CrewRecord[];
+  crewNameById?: Map<string, string>;
   masterRates: MasterRateRecord[];
   clientRates?: MasterRateRecord[];
   clientRateOverrides?: ClientCityRateOverrideRecord[];
@@ -437,7 +438,7 @@ export function buildPayrollRows(options: {
           coordinatorPaymentStatusId: show.assigned_coordinator_user_id ? (coordinatorPayrollByShowUser.get(`${show.id}:${show.assigned_coordinator_user_id}`)?.id ?? null) : null,
           coordinatorRateSchedule: show.assigned_coordinator_user_id ? (coordinatorCompensationByUser.get(show.assigned_coordinator_user_id) ?? null) : null,
           crewId,
-          crewName: safeText(crew?.name, "Unknown crew"),
+          crewName: safeText(crew?.name || options.crewNameById?.get(crewId), "Unknown crew"),
           crewEmail: safeText(crew?.email),
           crewPhone: safeText(crew?.phone),
           w9Status: safeText(crew?.w9_status, "missing"),
@@ -970,7 +971,7 @@ export async function getPayrollIndexData(requestedYear?: number): Promise<Payro
   }
 }
 
-export async function getPayrollSummaryData(requestedYear?: number, options: { showIds?: string[] } = {}): Promise<PayrollPageData> {
+export async function getPayrollSummaryData(requestedYear?: number, options: { showIds?: string[]; includeCoordinatorBookings?: boolean } = {}): Promise<PayrollPageData> {
   const currentYear = new Date().getFullYear();
   const requested = Number(requestedYear);
   const requestedIsValid = Number.isFinite(requested) && requested > 1900 && requested < 3000;
@@ -1242,12 +1243,22 @@ export async function getPayrollSummaryData(requestedYear?: number, options: { s
     ];
     const coordinatorCompensationByUser = await loadCoordinatorAgreements(admin, normalizedCoordinatorCompensationRes.error ? [] : normalizedCoordinatorCompensationRes.data || []);
 
+    // Only selected-order quotes need names; never load contact or tax data here.
+    const crewNameById = new Map<string, string>();
+    if (options.includeCoordinatorBookings && selectedShowIds) {
+      const crewIds = [...new Set(assignments.map((assignment) => assignment.crew_id))];
+      const result = await fetchChunked("crew", "id,name", "id", crewIds);
+      if (result.error) throw new Error(`Technician names could not be loaded: ${supabaseErrorMessage(result.error)}`);
+      for (const row of (result.data ?? []) as { id: string; name: string }[]) crewNameById.set(row.id, safeText(row.name, "Unknown crew"));
+    }
+
     const crewRows = buildPayrollRows({
       shows,
       laborDays,
       subCalls,
       assignments,
       crewRecords: [],
+      crewNameById,
       masterRates: (ratesRes.data ?? []) as MasterRateRecord[],
       clientRates: clientRatesRes.error ? [] : ((clientRatesRes.data ?? []) as MasterRateRecord[]),
       clientRateOverrides: clientRateOverridesRes.error ? [] : ((clientRateOverridesRes.data ?? []) as ClientCityRateOverrideRecord[]),
@@ -1277,7 +1288,7 @@ export async function getPayrollSummaryData(requestedYear?: number, options: { s
       }
     }
     for (const show of shows) summariesByShow.set(show.id, payrollSummaryForShow(show, financialByShow.get(show.id) ?? null));
-    for (const event of buildEventSummaries(crewRows)) summariesByShow.set(event.showId, stripPayrollEventDetailRows(event));
+    for (const event of buildEventSummaries(crewRows)) summariesByShow.set(event.showId, options.includeCoordinatorBookings && selectedShowIds ? event : stripPayrollEventDetailRows(event));
 
     return {
       eventSummaries: [...summariesByShow.values()].sort((a, b) => `${safeText(b.showStart)} ${safeText(b.showName)}`.localeCompare(`${safeText(a.showStart)} ${safeText(a.showName)}`)),
