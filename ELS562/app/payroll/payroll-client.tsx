@@ -1,5 +1,7 @@
 "use client";
 
+import CoordinatorPurchaseOrders from "./coordinator-purchase-orders";
+
 import { calculateCoordinatorPayments } from "@/lib/coordinator-payments";
 
 import { isOwnerDrawPayee, isOwnerTechEvent, ownerNotesText, withOwnerTechEvent, applyOwnerPassThrough, ownerDrawTotalForEvent, paidOwnerDrawsForEvent } from "@/lib/owner-draws";
@@ -2848,6 +2850,8 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
           </button>
         </div>
       </section>
+
+      <CoordinatorPurchaseOrders key={year} year={year} events={summaryEvents} />
 
       <section className="card">
         <div className="row"><div><h3>Owner draws — Storm Leigh</h3><p className="muted small">Owner draws are distributions, separate from contractor labor and 1099 totals.</p></div>

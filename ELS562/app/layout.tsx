@@ -50,18 +50,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const pathname = requestHeaders.get("x-els-pathname") || "";
   const isPublicFeedbackRoute = pathname === "/feedback" || pathname.startsWith("/feedback/");
   const isPublicOnboardingRoute = pathname === "/onboarding" || pathname.startsWith("/onboarding/");
+  const isPublicCoordinatorOrderRoute = pathname.startsWith("/coordinator-purchase-order/");
   const isPasswordRecoveryRoute = pathname === "/update-password";
 
   // A fresh Supabase recovery link does not have an authenticated server cookie
   // yet. Render this route without waiting on the authenticated app shell so
   // its client can exchange the recovery code on the very first visit.
-  if (isPublicFeedbackRoute || isPublicOnboardingRoute || isPasswordRecoveryRoute) {
+  if (isPublicFeedbackRoute || isPublicOnboardingRoute || isPublicCoordinatorOrderRoute || isPasswordRecoveryRoute) {
     return (
       <html lang="en">
         <body>
           <div
             className={isPasswordRecoveryRoute ? "shell" : "feedback-route-shell"}
-            aria-label={isPasswordRecoveryRoute ? "Password recovery" : isPublicOnboardingRoute ? "Public onboarding form" : "Public feedback survey"}
+            aria-label={isPublicCoordinatorOrderRoute ? "Coordinator purchase order" : isPasswordRecoveryRoute ? "Password recovery" : isPublicOnboardingRoute ? "Public onboarding form" : "Public feedback survey"}
           >
             {children}
           </div>

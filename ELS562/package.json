@@ -13,7 +13,9 @@
     "test:purchase-order-review": "node tests/purchase-order-review.cjs",
     "test:payroll-scheduling": "node tests/payroll-scheduling.cjs && node tests/payroll-persistence.cjs",
     "test:cancellations": "node tests/cancellation-message.cjs",
-    "test:coordinator-agreements": "node tests/coordinator-agreements.cjs"
+    "test:coordinator-agreements": "node tests/coordinator-agreements.cjs",
+    "test:coordinator-purchase-orders": "node tests/coordinator-purchase-orders.cjs",
+    "test:coordinator-purchase-orders-db": "node tests/coordinator-purchase-orders-db.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.5.2",

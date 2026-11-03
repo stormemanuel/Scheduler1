@@ -1,3 +1,4 @@
+import { processCoordinatorPurchaseOrders } from "@/lib/coordinator-purchase-orders";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
 import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
 import { availabilityInterval, availabilityOverlaps, availabilityAssignmentActive } from "@/lib/availability-conflicts";
@@ -2894,8 +2895,8 @@ export async function GET(request: Request) {
   const admin = createSupabaseAdminClient();
   if (!admin) return NextResponse.json({ message: "SUPABASE_SERVICE_ROLE_KEY is missing." }, { status: 500 });
   try {
-    const [result, purchaseOrders] = await Promise.all([processDueServerMessages(admin, null), processPurchaseOrderAutomation(admin, new URL(request.url).origin)]);
-    return NextResponse.json({ ok: true, ...result, purchase_orders: purchaseOrders, message: `${result.processed ? `Processed ${result.processed} due server message${result.processed === 1 ? "" : "s"}.` : "No due server messages."} Checked ${purchaseOrders.checked} Purchase Order${purchaseOrders.checked === 1 ? "" : "s"}.` });
+    const [result, purchaseOrders, coordinatorOrders] = await Promise.all([processDueServerMessages(admin, null), processPurchaseOrderAutomation(admin, new URL(request.url).origin), processCoordinatorPurchaseOrders(admin, new URL(request.url).origin).catch((error) => ({ checked: 0, approved: 0, failed: 1, error: error instanceof Error ? error.message : "Coordinator Purchase Order automation failed." }))]);
+    return NextResponse.json({ ok: true, ...result, purchase_orders: purchaseOrders, coordinator_purchase_orders: coordinatorOrders, message: `${result.processed ? `Processed ${result.processed} due server message${result.processed === 1 ? "" : "s"}.` : "No due server messages."} Checked ${purchaseOrders.checked} Purchase Order${purchaseOrders.checked === 1 ? "" : "s"}.` });
   } catch (error) {
     return NextResponse.json({ message: error instanceof Error ? error.message : "Unable to process due server messages." }, { status: 400 });
   }
