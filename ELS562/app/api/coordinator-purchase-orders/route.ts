@@ -1,3 +1,4 @@
+import { withCoordinatorOrderDeadline, CoordinatorOrderRequestTimeout } from "@/lib/coordinator-order-request";
 import { NextResponse } from "next/server";
 import { getSessionUser, normalizeRole, canUsePage } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase-server";
@@ -22,7 +23,14 @@ function yearValue(value: unknown) {
   return year;
 }
 async function quoteFor(year: number, coordinatorId: string, showIds: string[]) {
-  const data = await getPayrollSummaryData(year);
+  if (!coordinatorId || showIds.length < 1 || showIds.length > 25 || showIds.some((id) => !id.trim()) || new Set(showIds).size !== showIds.length) throw new CoordinatorOrderError("Select a coordinator and between 1 and 25 distinct shows.");
+  let data;
+  try {
+    data = await withCoordinatorOrderDeadline(() => getPayrollSummaryData(year, { showIds }), 30_000, "The selected shows could not be verified within 30 seconds. Please retry Preview; no Purchase Order was created or sent.");
+  } catch (error) {
+    if (error instanceof CoordinatorOrderRequestTimeout) throw new CoordinatorOrderError(error.message, 504);
+    throw error;
+  }
   if (data.setupMissing || data.error) throw new CoordinatorOrderError(data.error || "Payroll could not be verified.", 503);
   return coordinatorOrderQuote(data.eventSummaries, coordinatorId, showIds);
 }

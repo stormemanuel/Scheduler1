@@ -975,7 +975,7 @@ export async function getPayrollIndexData(requestedYear?: number): Promise<Payro
   }
 }
 
-export async function getPayrollSummaryData(requestedYear?: number): Promise<PayrollPageData> {
+export async function getPayrollSummaryData(requestedYear?: number, options: { showIds?: string[] } = {}): Promise<PayrollPageData> {
   const currentYear = new Date().getFullYear();
   const requested = Number(requestedYear);
   const requestedIsValid = Number.isFinite(requested) && requested > 1900 && requested < 3000;
@@ -983,6 +983,8 @@ export async function getPayrollSummaryData(requestedYear?: number): Promise<Pay
   const timer = createPayrollTimer("summary", loadedYear);
 
   try {
+    const selectedShowIds = options.showIds === undefined ? undefined : [...new Set(options.showIds.map((id) => id.trim()).filter(Boolean))];
+    if (selectedShowIds && (!selectedShowIds.length || selectedShowIds.length > 25)) throw new Error("Select between 1 and 25 shows for coordinator Purchase Orders.");
     const supabase = await createSupabaseServerClient();
     timer.mark("auth/setup");
     if (!supabase) {
@@ -1006,19 +1008,21 @@ export async function getPayrollSummaryData(requestedYear?: number): Promise<Pay
     }
 
     const admin = createSupabaseAdminClient();
-    if (admin) await refreshOverduePurchaseOrders(admin);
+    if (admin && !selectedShowIds) await refreshOverduePurchaseOrders(admin);
     const readClient = admin ?? supabase;
     const emptyResult = { data: [] as unknown[], error: null };
     const yearStart = `${loadedYear}-01-01`;
     const nextYearStart = `${loadedYear + 1}-01-01`;
 
-    const showsRes = await readClient
+    let showsQuery = readClient
       .from("shows")
       .select("id, name, client, business_client_id, venue, rate_city, show_start, show_end, assigned_coordinator_user_id")
       .gte("show_start", yearStart)
       .lt("show_start", nextYearStart)
       .order("show_start", { ascending: false })
-      .limit(500);
+      .limit(selectedShowIds?.length || 500);
+    if (selectedShowIds) showsQuery = showsQuery.in("id", selectedShowIds);
+    const showsRes = await showsQuery;
     timer.mark("event lookup");
 
     if (showsRes.error) {

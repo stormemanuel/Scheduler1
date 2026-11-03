@@ -15,7 +15,8 @@
     "test:cancellations": "node tests/cancellation-message.cjs",
     "test:coordinator-agreements": "node tests/coordinator-agreements.cjs",
     "test:coordinator-purchase-orders": "node tests/coordinator-purchase-orders.cjs",
-    "test:coordinator-purchase-orders-db": "node tests/coordinator-purchase-orders-db.cjs"
+    "test:coordinator-purchase-orders-db": "node tests/coordinator-purchase-orders-db.cjs",
+    "test:coordinator-order-preview": "node tests/coordinator-order-preview.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.5.2",

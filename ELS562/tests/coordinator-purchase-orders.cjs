@@ -1,10 +1,11 @@
 const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('node:assert/strict'),ts=require('typescript'),crypto=require('crypto');
 const root=path.resolve(__dirname,'..');
-function load(file,mocks={},globals={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,{exports,Error,require:name=>{if(!(name in mocks))throw new Error('Unexpected '+name);return mocks[name]},...globals});return exports;}
+function load(file,mocks={},globals={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,{exports,Error,setTimeout,clearTimeout,AbortController,require:name=>{if(!(name in mocks))throw new Error('Unexpected '+name);return mocks[name]},...globals});return exports;}
 const calc=load('lib/payroll-calculations.ts',{'@/lib/rates-types':{halfDayFromFullDay:v=>v/2}}),owner=load('lib/owner-draws.ts'),review=load('lib/purchase-order-review.ts');
+const requestUtils=load('lib/coordinator-order-request.ts',{}, {setTimeout:(fn,ms)=>setTimeout(fn,ms===30000?5:ms)});
 const types=load('lib/coordinator-purchase-order-types.ts',{'@/lib/owner-draws':owner});
 const sends=[];const service=load('lib/coordinator-purchase-orders.ts',{'crypto':crypto,'@/lib/payroll-calculations':calc,'@/lib/purchase-order-review':review},{process:{env:{ELS_RESEND_API_KEY:'test-only-key',RESEND_EMAIL_DOMAIN:'example.com'}},fetch:async(url,options)=>{sends.push({url,...options,body:JSON.parse(options.body||'{}')});return{ok:true,json:async()=>url.includes('/emails/')?{last_event:'opened'}:{id:'email-id'}}}});
-let role='owner',signedIn=true,schemaMissing=false;
+let role='owner',signedIn=true,schemaMissing=false,slowSummary=false,lastSummaryOptions;
 const rows=[],claims=new Set();const copy=value=>JSON.parse(JSON.stringify(value));
 const matches=(row,column,value)=>{const [head,key]=column.split('->>');return (key?row[head]?.[key]:row[column])===value;};
 const db={from(table){let operation='read',patch,filters=[],order,limit=Infinity,cursor;
@@ -21,7 +22,7 @@ const db={from(table){let operation='read',patch,filters=[],order,limit=Infinity
 const events=[['show1',100],['show2',250]].map(([id,amount])=>({showId:id,showName:'Show '+id,showStart:'2026-11-01',showEnd:'2026-11-02',coordinatorPayments:[{coordinatorUserId:'coordinator',coordinatorName:'Coordinator',payableAmount:amount,paymentStatus:'unpaid',paid:false,fullDayTechDays:5,halfDayTechs:2}]}));
 const next={NextResponse:{json:(body,init={})=>({body,status:init.status||200,headers:init.headers})}};
 const auth={getSessionUser:async()=>({user:signedIn?{id:'owner'}:null,profile:{role},access:{}}),normalizeRole:v=>v,canUsePage:()=>true};
-const api=load('app/api/coordinator-purchase-orders/route.ts',{'next/server':next,'@/lib/auth':auth,'@/lib/supabase-server':{createSupabaseAdminClient:()=>db},'@/lib/payroll-data':{getPayrollSummaryData:async()=>({setupMissing:false,error:null,eventSummaries:copy(events)})},'@/lib/coordinator-purchase-order-types':types,'@/lib/coordinator-purchase-orders':service},{process:{env:{}},URL});
+const api=load('app/api/coordinator-purchase-orders/route.ts',{'next/server':next,'@/lib/auth':auth,'@/lib/supabase-server':{createSupabaseAdminClient:()=>db},'@/lib/payroll-data':{getPayrollSummaryData:async(year,options)=>{lastSummaryOptions=options;return slowSummary?new Promise(()=>{}):{setupMissing:false,error:null,eventSummaries:copy(events)}}},'@/lib/coordinator-purchase-order-types':types,'@/lib/coordinator-order-request':requestUtils,'@/lib/coordinator-purchase-orders':service},{process:{env:{}},URL});
 const publicApi=load('app/api/coordinator-purchase-orders/review/route.ts',{'next/server':next,'@/lib/supabase-server':{createSupabaseAdminClient:()=>db},'@/lib/auth':auth,'@/lib/coordinator-purchase-orders':service},{URL});
 const post=body=>api.POST({url:'https://example.com/api/coordinator-purchase-orders',json:async()=>body});
 const reviewPost=body=>publicApi.POST({json:async()=>body});
@@ -30,6 +31,7 @@ let passed=0;function check(name,test){test();passed++;console.log('PASS '+name)
  signedIn=false;let result=await post({action:'create'});check('anonymous cannot create documents',()=>assert.equal(result.status,401));
  signedIn=true;role='coordinator';result=await post({action:'create'});check('coordinator cannot create their own payable document',()=>assert.equal(result.status,403));role='owner';
  const selection={year:2026,coordinator_id:'coordinator',show_ids:['show1','show2'],net_days:15};
+ result=await post({action:'preview',...selection});check('preview scopes authoritative Payroll lookup to selected shows',()=>assert.equal(lastSummaryOptions.showIds.join(','),'show1,show2'));
  result=await post({action:'preview',...selection});check('preview combines authoritative per-show balances',()=>{assert.equal(result.status,200);assert.equal(result.body.quote.total,350);assert.equal(result.body.quote.lines.length,2);});
  result=await post({action:'create',...selection,quote_hash:'stale'});check('stale preview cannot create a PO',()=>assert.equal(result.status,409));
  result=await post({action:'create',...selection,quote_hash:(await post({action:'preview',...selection})).body.hash,total:1,coordinator_email:'attacker@example.com'});
@@ -87,5 +89,6 @@ let passed=0;function check(name,test){test();passed++;console.log('PASS '+name)
  const response=await middleware.middleware({headers:new Headers(),nextUrl:new NextUrl('https://example.com'+pathname),method:'GET',cookies:{getAll:()=>[],get:()=>undefined}});
  check('middleware '+(isPublic?'allows token route ':'protects management route ')+pathname,()=>assert.equal(Boolean(response.next),isPublic));
  }
+ slowSummary=true;const beforeOrders=rows.length,beforeEmails=sends.length;result=await post({action:'preview',...selection});check('stalled server quote returns timeout without creating or sending',()=>{assert.equal(result.status,504);assert.equal(rows.length,beforeOrders);assert.equal(sends.length,beforeEmails);});
  console.log(passed+' combined coordinator Purchase Order checks passed; database and email operations mocked.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
