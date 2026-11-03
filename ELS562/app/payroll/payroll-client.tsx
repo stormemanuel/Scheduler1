@@ -1833,7 +1833,7 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
     const scheduledFor = changes.scheduled_for === undefined ? current.scheduledFor : changes.scheduled_for;
     const status = changes.payment_status ?? current.paymentStatus;
     const paymentStatus = status === "paid" ? "paid" : status === "scheduled" ? "scheduled" : scheduledFor ? "scheduled" : "unpaid";
-    setSavingKey(`coordinator:${event.showId}`);
+    setSavingKey(`coordinator:${event.showId}:${current.coordinatorUserId}`);
     setMessage("");
     try {
       const response = await fetch("/api/payroll", {
@@ -2316,11 +2316,11 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
   }
 
   function eventPayrollRows(event: PayrollEventSummary): Array<Array<string | number | null | undefined>> {
-    const coordinator = event.coordinatorPayment;
+    const coordinators = event.coordinatorPayments?.length ? event.coordinatorPayments : event.coordinatorPayment ? [event.coordinatorPayment] : [];
     return [
       ["Show", "Crew", "Roles", "Estimated", "Override", "Payable", "Scheduled For", "Status", "Phone", "Email", "Notes"],
       ...event.rows.map((row) => [row.showName, row.crewName, row.roles.join(" / "), row.estimatedTotal, row.overrideAmount ?? "", payable(row), row.scheduledFor || "", paymentStatusLabel(paymentStatusFor(row)), row.crewPhone, row.crewEmail, row.notes]),
-      ...(coordinator ? [[event.showName, coordinator.coordinatorName, "Labor Coordinator", coordinator.projectedAmount, coordinator.overrideAmount ?? "", coordinator.payableAmount, coordinator.scheduledFor || "", paymentStatusLabel(coordinator.paymentStatus), "", "", coordinator.notes]] : []),
+      ...coordinators.map((coordinator) => [event.showName, coordinator.coordinatorName, "Labor Coordinator", coordinator.projectedAmount, coordinator.overrideAmount ?? "", coordinator.payableAmount, coordinator.scheduledFor || "", paymentStatusLabel(coordinator.paymentStatus), "", "", coordinator.notes]),
     ];
   }
 
@@ -2969,36 +2969,41 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
               </div>
             ) : (
               <>
-            {event.coordinatorPayment ? (
-              <div className="card compact" style={{ marginTop: 14, background: "#fbfcfd", boxShadow: "none" }}>
+            {(event.coordinatorPayments?.length ? event.coordinatorPayments : event.coordinatorPayment ? [event.coordinatorPayment] : []).map((payment) => {
+              const coordinatorUserId = payment.coordinatorUserId;
+              if (!coordinatorUserId) return null;
+              const coordinatorKey = `coordinator:${event.showId}:${coordinatorUserId}`;
+              const coordinatorEvent = { ...event, coordinatorPayment: payment };
+              return (
+              <div key={payment.coordinatorUserId} className="card compact" style={{ marginTop: 14, background: "#fbfcfd", boxShadow: "none" }}>
                 <div className="row" style={{ alignItems: "flex-end" }}>
                   <div>
                     <strong>Coordinator payment</strong>
                     <div className="small muted">
-                      {event.coordinatorPayment.coordinatorName} · {event.coordinatorPayment.fullDayTechDays} full-day tech-days · {event.coordinatorPayment.halfDayTechs} half-day techs{event.coordinatorPayment.alternateUnusedDays ? ` · ${event.coordinatorPayment.alternateUnusedDays} unused alternate day${event.coordinatorPayment.alternateUnusedDays === 1 ? "" : "s"} at $10` : ""}
+                      {payment.coordinatorName} · {payment.fullDayTechDays} full-day tech-days · {payment.halfDayTechs} half-day techs{payment.alternateUnusedDays ? ` · ${payment.alternateUnusedDays} unused alternate day${payment.alternateUnusedDays === 1 ? "" : "s"} at $10` : ""}
                     </div>
                     <div className="small" style={{ marginTop: 4 }}>
-                      {event.coordinatorPayment.rateSchedule ? "Saved coordinator agreement" : "No saved agreement found — default rates"} · Agreement estimate: {money(event.coordinatorPayment.projectedAmount)}
-                      {event.coordinatorPayment.overrideAmount !== null ? ` · Manual event override: ${money(event.coordinatorPayment.overrideAmount)}` : ""}
+                      {payment.rateSchedule ? "Saved coordinator agreement" : "No saved agreement found — default rates"} · Agreement estimate: {money(payment.projectedAmount)}
+                      {payment.overrideAmount !== null ? ` · Manual event override: ${money(payment.overrideAmount)}` : ""}
                     </div>
-                    {coordinatorFeeWaived(event.coordinatorPayment) ? (
+                    {coordinatorFeeWaived(payment) ? (
                       <div className="small" style={{ marginTop: 4 }}>
                         <strong>Waived:</strong> this coordinator fee is not deducted from contract labor or P&amp;L expenses.
                       </div>
                     ) : null}
                     <div className="toolbar" style={{ marginTop: 8 }}>
-                      <span className="badge">Projected {money(event.coordinatorPayment.projectedAmount)}</span>
-                      <span className="badge">Payable {money(event.coordinatorPayment.payableAmount)}</span>
-                      {coordinatorFeeWaived(event.coordinatorPayment) ? <span className="badge event-badge-current">Waived</span> : paymentStatusBadge(event.coordinatorPayment.paymentStatus)}
+                      <span className="badge">Projected {money(payment.projectedAmount)}</span>
+                      <span className="badge">Payable {money(payment.payableAmount)}</span>
+                      {coordinatorFeeWaived(payment) ? <span className="badge event-badge-current">Waived</span> : paymentStatusBadge(payment.paymentStatus)}
                     </div>
                   </div>
                   <div className="toolbar">
-                    {coordinatorFeeWaived(event.coordinatorPayment) ? (
-                      <button type="button" className="ghost" disabled={savingKey === `coordinator:${event.showId}`} onClick={() => void unwaiveCoordinatorPayment(event)}>
+                    {coordinatorFeeWaived(payment) ? (
+                      <button type="button" className="ghost" disabled={savingKey === coordinatorKey} onClick={() => void unwaiveCoordinatorPayment(coordinatorEvent)}>
                         Unwaive fee
                       </button>
                     ) : (
-                      <button type="button" className="ghost" disabled={savingKey === `coordinator:${event.showId}`} onClick={() => void waiveCoordinatorPayment(event)}>
+                      <button type="button" className="ghost" disabled={savingKey === coordinatorKey} onClick={() => void waiveCoordinatorPayment(coordinatorEvent)}>
                         Waive coordinator fee
                       </button>
                     )}
@@ -3007,35 +3012,35 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                     Event payout override
                     <input
                       inputMode="decimal"
-                      value={moneyDraftValue(`coordinator:${event.showId}`, event.coordinatorPayment.overrideAmount)}
+                      value={moneyDraftValue(coordinatorKey, payment.overrideAmount)}
                       placeholder="Use negotiated rates"
-                      onChange={(inputEvent) => changeMoneyDraft(`coordinator:${event.showId}`, inputEvent.target.value)}
+                      onChange={(inputEvent) => changeMoneyDraft(coordinatorKey, inputEvent.target.value)}
                       onKeyDown={currencyEnterToBlur}
-                      onBlur={() => commitMoneyDraft(`coordinator:${event.showId}`, event.coordinatorPayment?.overrideAmount, (value) => {
-                        updateLocalCoordinator(event.showId, { coordinatorOverrideAmount: value });
-                        void saveCoordinatorPayment(event, { payout_override: value });
+                      onBlur={() => commitMoneyDraft(coordinatorKey, payment?.overrideAmount, (value) => {
+                        updateLocalCoordinator(event.showId, { coordinatorOverrideAmount: value }, coordinatorUserId);
+                        void saveCoordinatorPayment(coordinatorEvent, { payout_override: value });
                       })}
                     />
                   </label>
-                  {event.coordinatorPayment.overrideAmount !== null ? <button className="ghost" type="button" disabled={savingKey === `coordinator:${event.showId}`} onClick={async () => {
-                    const wasWaived = coordinatorFeeWaived(event.coordinatorPayment);
-                    const ok = await saveCoordinatorPayment(event, { payout_override: null, ...(wasWaived ? { payment_status: "unpaid" as const, paid: false, scheduled_for: null, notes: removeWaiverNote(event.coordinatorPayment?.notes) } : {}) });
-                    if (ok) setMoneyDrafts((current) => { const next = { ...current }; delete next[`coordinator:${event.showId}`]; return next; });
+                  {payment.overrideAmount !== null ? <button className="ghost" type="button" disabled={savingKey === coordinatorKey} onClick={async () => {
+                    const wasWaived = coordinatorFeeWaived(payment);
+                    const ok = await saveCoordinatorPayment(coordinatorEvent, { payout_override: null, ...(wasWaived ? { payment_status: "unpaid" as const, paid: false, scheduled_for: null, notes: removeWaiverNote(payment?.notes) } : {}) });
+                    if (ok) setMoneyDrafts((current) => { const next = { ...current }; delete next[coordinatorKey]; return next; });
                   }}>Use agreement rates</button> : null}
                   <label className="field" style={{ minWidth: 160 }}>
                     Scheduled for
                     <input
                       type="date"
-                      disabled={savingKey === `coordinator:${event.showId}`}
-                      value={rowDateDrafts[`coordinator:${event.showId}`] ?? event.coordinatorPayment.scheduledFor ?? ""}
-                      onChange={(inputEvent) => setRowDateDrafts((current) => ({ ...current, [`coordinator:${event.showId}`]: inputEvent.target.value }))}
+                      disabled={savingKey === coordinatorKey}
+                      value={rowDateDrafts[coordinatorKey] ?? payment.scheduledFor ?? ""}
+                      onChange={(inputEvent) => setRowDateDrafts((current) => ({ ...current, [coordinatorKey]: inputEvent.target.value }))}
                       onKeyDown={(inputEvent) => { if (inputEvent.key === "Enter") inputEvent.currentTarget.blur(); }}
                       onBlur={(inputEvent) => {
                         const nextDate = inputEvent.currentTarget.value || null;
                         if (!inputEvent.currentTarget.validity.valid || (nextDate && !validPayrollDate(nextDate))) { setMessage("Enter a valid coordinator date with a complete year."); return; }
-                        const nextStatus: PayrollPaymentStatus = event.coordinatorPayment?.paymentStatus === "paid" ? "paid" : nextDate ? "scheduled" : "unpaid";
-                        void saveCoordinatorPayment(event, { scheduled_for: nextDate, payment_status: nextStatus, paid: nextStatus === "paid" }).then((ok) => {
-                          if (ok) setRowDateDrafts((current) => { const next = { ...current }; delete next[`coordinator:${event.showId}`]; return next; });
+                        const nextStatus: PayrollPaymentStatus = payment?.paymentStatus === "paid" ? "paid" : nextDate ? "scheduled" : "unpaid";
+                        void saveCoordinatorPayment(coordinatorEvent, { scheduled_for: nextDate, payment_status: nextStatus, paid: nextStatus === "paid" }).then((ok) => {
+                          if (ok) setRowDateDrafts((current) => { const next = { ...current }; delete next[coordinatorKey]; return next; });
                         });
                       }}
                     />
@@ -3043,15 +3048,15 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                   <label className="field" style={{ minWidth: 150 }}>
                     Status
                     <select
-                      value={event.coordinatorPayment.paymentStatus}
-                      disabled={savingKey === `coordinator:${event.showId}` || rowDateDrafts[`coordinator:${event.showId}`] !== undefined}
-                      style={{ ...paymentStatusStyle(event.coordinatorPayment.paymentStatus), minWidth: 130, padding: "8px 10px", border: "1px solid", borderRadius: 10 }}
+                      value={payment.paymentStatus}
+                      disabled={savingKey === coordinatorKey || rowDateDrafts[coordinatorKey] !== undefined}
+                      style={{ ...paymentStatusStyle(payment.paymentStatus), minWidth: 130, padding: "8px 10px", border: "1px solid", borderRadius: 10 }}
                       onChange={(selectEvent) => {
                         const nextStatus = selectEvent.target.value as PayrollPaymentStatus;
-                        const nextScheduledFor = nextStatus === "scheduled" ? (eventDateDrafts[event.showId] ?? event.coordinatorPayment?.scheduledFor ?? eventDefaultScheduledFor(event)) : nextStatus === "unpaid" ? null : event.coordinatorPayment?.scheduledFor || null;
+                        const nextScheduledFor = nextStatus === "scheduled" ? (eventDateDrafts[event.showId] ?? payment?.scheduledFor ?? eventDefaultScheduledFor(event)) : nextStatus === "unpaid" ? null : payment?.scheduledFor || null;
                         if (nextStatus === "scheduled" && !validPayrollDate(nextScheduledFor)) { setMessage("Choose a valid scheduled-by date first."); return; }
-                        updateLocalCoordinator(event.showId, { coordinatorPaymentStatus: nextStatus, coordinatorPaid: nextStatus === "paid", coordinatorScheduledFor: nextScheduledFor });
-                        void saveCoordinatorPayment(event, { payment_status: nextStatus, paid: nextStatus === "paid", scheduled_for: nextScheduledFor });
+                        updateLocalCoordinator(event.showId, { coordinatorPaymentStatus: nextStatus, coordinatorPaid: nextStatus === "paid", coordinatorScheduledFor: nextScheduledFor }, coordinatorUserId);
+                        void saveCoordinatorPayment(coordinatorEvent, { payment_status: nextStatus, paid: nextStatus === "paid", scheduled_for: nextScheduledFor });
                       }}
                     >
                       <option value="unpaid">Unpaid</option>
@@ -3062,29 +3067,17 @@ export default function PayrollClient({ initialRows, initialEventSummaries, avai
                   <label className="field" style={{ minWidth: 220, flex: 1 }}>
                     Notes
                     <input
-                      value={event.coordinatorPayment.notes}
+                      value={payment.notes}
                       placeholder="Invoice, confirmation, or payment note..."
-                      onChange={(inputEvent) => updateLocalCoordinator(event.showId, { coordinatorNotes: inputEvent.target.value })}
-                      onBlur={(inputEvent) => void saveCoordinatorPayment(event, { notes: inputEvent.currentTarget.value })}
+                      onChange={(inputEvent) => updateLocalCoordinator(event.showId, { coordinatorNotes: inputEvent.target.value }, coordinatorUserId)}
+                      onBlur={(inputEvent) => void saveCoordinatorPayment(coordinatorEvent, { notes: inputEvent.currentTarget.value })}
                     />
                   </label>
                 </div>
               </div>
-            ) : null}
+              );
+            })}
 
-            {(event.coordinatorPayments ?? []).filter((payment) => payment.coordinatorUserId !== event.coordinatorPayment?.coordinatorUserId).length ? (
-              <div className="card compact" style={{ marginTop: 14, background: "#fffdf2", boxShadow: "none", borderLeft: "4px solid #d4a62a" }}>
-                <strong>Admin coordination credits</strong>
-                <div className="small muted" style={{ marginTop: 4 }}>Admin-owned crew added outside the assigned coordinator payout.</div>
-                <div className="toolbar" style={{ marginTop: 8 }}>
-                  {(event.coordinatorPayments ?? []).filter((payment) => payment.coordinatorUserId !== event.coordinatorPayment?.coordinatorUserId).map((payment) => (
-                    <span key={payment.coordinatorUserId || payment.coordinatorName} className="badge">
-                      {payment.coordinatorName}: {payment.fullDayTechDays} full-day / {payment.halfDayTechs} half-day · {money(payment.payableAmount)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
 
             <div className="card compact" style={{ marginTop: 14 }}>
               <label className="checkbox-card"><input type="checkbox" checked={isOwnerTechEvent(event.financialNotes)} disabled={savingFinancialShowId === event.showId || event.rows.filter((row) => isOwnerDrawPayee(row.crewName)).length !== 1} onChange={async (inputEvent) => {

@@ -43,9 +43,36 @@ check('coordinator payment changes preserve other booking-owner overrides',()=>a
 check('waived zero and paid status propagate to matching cached calls',()=>{assert.equal(localRows[0].calls[0].coordinationOverrideAmount,0);assert.equal(localRows[0].calls[0].coordinationPaid,true);});
 (async()=>{
  let restored;
- const resetContext=vm.createContext({event:{coordinatorPayment:{notes:'Coordinator fee waived by admin.'}},coordinatorFeeWaived:()=>true,removeWaiverNote:()=>'',saveCoordinatorPayment:async(_,changes)=>{restored=changes;return true},setMoneyDrafts:()=>{}});
+ const resetContext=vm.createContext({payment:{notes:'Coordinator fee waived by admin.'},coordinatorEvent:{coordinatorPayment:{notes:'Coordinator fee waived by admin.'}},coordinatorKey:'coordinator:show:legacy',coordinatorFeeWaived:()=>true,removeWaiverNote:()=>'',saveCoordinatorPayment:async(_,changes)=>{restored=changes;return true},setMoneyDrafts:()=>{}});
  vm.runInContext(ts.transpileModule('const result=('+resetHandler+')();',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,resetContext);await vm.runInContext('result',resetContext);
  check('restoring waived agreement does not mark newly owed money paid',()=>{assert.equal(restored.payout_override,null);assert.equal(restored.payment_status,'unpaid');assert.equal(restored.paid,false);});
+ let coordinatorRenderer;
+ function findRenderer(node){if(ts.isCallExpression(node)&&node.arguments[0]?.getText(clientAst).includes('const coordinatorKey = `coordinator:')) coordinatorRenderer=node.arguments[0].getText(clientAst);ts.forEachChild(node,findRenderer);}findRenderer(clientAst);
+ let saveFunction,exportFunction;
+ function findSave(node){if(ts.isFunctionDeclaration(node)&&node.name?.text==='saveCoordinatorPayment')saveFunction=node.getText(clientAst);if(ts.isFunctionDeclaration(node)&&node.name?.text==='eventPayrollRows')exportFunction=node.getText(clientAst);ts.forEachChild(node,findSave);}findSave(clientAst);
+ const storm={coordinatorUserId:'storm',coordinatorName:'Storm Leigh',payableAmount:295,overrideAmount:null,paymentStatus:'unpaid',scheduledFor:null,notes:''};
+ const juan={coordinatorUserId:'juan',coordinatorName:'Juan Martinez',payableAmount:55,overrideAmount:null,paymentStatus:'unpaid',scheduledFor:null,notes:''};
+ let uiSave;
+ const uiContext=vm.createContext({React:require('react'),event:{showId:'show',showName:'Show'},savingKey:null,money:String,moneyDraftValue:(_,v)=>v??'',rowDateDrafts:{},eventDateDrafts:{},coordinatorFeeWaived:()=>false,paymentStatusBadge:v=>v,paymentStatusStyle:()=>({}),currencyEnterToBlur:()=>{},validPayrollDate:()=>true,eventDefaultScheduledFor:()=> '2026-12-01',updateLocalCoordinator:()=>{},saveCoordinatorPayment:(event,changes)=>{uiSave={id:event.coordinatorPayment.coordinatorUserId,changes}}});
+ vm.runInContext(ts.transpileModule('function render(payment){return ('+coordinatorRenderer+')(payment)}',{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React}}).outputText,uiContext);
+ uiContext.payment=juan;
+ const ui=vm.runInContext('render(payment)',uiContext);
+ const html=require('react-dom/server').renderToStaticMarkup(ui);
+ check('Juan has coordinator payment controls instead of an admin credit badge',()=>{assert.ok(html.includes('Juan Martinez'));assert.ok(html.includes('Coordinator payment'));assert.ok(html.includes('Scheduled for'));assert.ok(html.includes('<select'));assert.ok(!html.includes('Admin coordination credits'));});
+ function findSelect(node){if(!node||typeof node!=='object')return;if(node.type==='select')return node;for(const child of [node.props?.children].flat(Infinity)){const match=findSelect(child);if(match)return match;}}
+ findSelect(ui).props.onChange({target:{value:'paid'}});
+ check('Juan payment control submits Juan as payee',()=>{assert.equal(uiSave.id,'juan');assert.equal(uiSave.changes.payment_status,'paid');});
+ let sent,localSave;
+ const saveContext=vm.createContext({event:{showId:'show',showName:'Show',coordinatorPayment:juan},setSavingKey:()=>{},setMessage:()=>{},fetch:async(_,options)=>{sent=JSON.parse(options.body);return{ok:true,text:async()=>JSON.stringify({ok:true,row:{...sent,id:'juan-status'}})}},updateLocalCoordinator:(show,patch,id)=>{localSave={show,patch,id}}});
+ vm.runInContext(ts.transpileModule(saveFunction,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,saveContext);
+ await vm.runInContext('saveCoordinatorPayment(event,{payment_status:"paid",paid:true})',saveContext);
+ check('additional coordinator can be marked paid under their own account',()=>{assert.equal(sent.coordinator_user_id,'juan');assert.equal(sent.paid,true);assert.equal(localSave.id,'juan');assert.equal(localSave.patch.coordinatorPaid,true);});
+ localRows=[{showId:'show',showAssignedCoordinatorUserId:'storm',coordinatorPaid:false,calls:[{coordinationOwnerUserId:'juan'},{coordinationOwnerUserId:'storm'}]}];
+ vm.runInContext('updateLocalCoordinator("show",{coordinatorPaid:true,coordinatorPaymentStatus:"paid"},"juan")',context);
+ check('paying Juan leaves Storm and other coordinator balances unchanged',()=>{assert.equal(localRows[0].coordinatorPaid,false);assert.equal(localRows[0].calls[0].coordinationPaid,true);assert.equal(localRows[0].calls[1].coordinationPaid,undefined);});
+ const exportContext=vm.createContext({event:{showName:'Show',rows:[],coordinatorPayment:storm,coordinatorPayments:[storm,juan]},paymentStatusLabel:v=>v});
+ vm.runInContext(ts.transpileModule(exportFunction,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,exportContext);
+ check('event payroll export includes additional coordinators and their balances',()=>{const rows=vm.runInContext('eventPayrollRows(event)',exportContext);assert.equal(rows.length,3);assert.equal(rows[2][1],'Juan Martinez');assert.equal(rows[2][5],55);});
  let pages=[];const profiles=[profile];const admin={from:()=>({select(){return this},order(){return this},range:async()=>({data:profiles,error:null})}),auth:{admin:{listUsers:async({page})=>{pages.push(page);return{data:{users:page===1?Array.from({length:1000},(_,i)=>({id:'other'+i})): [account]},error:null}}}}};
  const loaded=await loadCoordinatorAgreements(admin,[]);check('Auth pagination loads agreement beyond first 1000 users',()=>{assert.equal(pages.length,2);assert.equal(loaded.get('legacy').full_day_rate_1_20,40);});
  admin.auth.admin.listUsers=async()=>({data:{users:[]},error:{message:'denied'}});
