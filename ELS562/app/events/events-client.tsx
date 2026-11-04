@@ -1,5 +1,6 @@
 "use client";
 
+import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup } from "@/lib/schedule-locations";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
 
 import { Component, Fragment, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
@@ -5290,7 +5291,6 @@ function EventsClientInner({
       }
     }
 
-    const { venueName, address } = splitVenueAndAddress(selectedShow.venue);
     const showName = scheduleExportShows.length > 1 ? `${selectedShow.name || "ELS Show"} and linked shows` : selectedShow.name || "ELS Show";
     const meta = eventMessageMeta(selectedShow);
 
@@ -5298,6 +5298,7 @@ function EventsClientInner({
       .map(([crewId, item]) => {
         const sortedCalls = item.calls.sort((a, b) => `${a.day.labor_date} ${a.show.name} ${assignmentStart(a.assignment, a.call)} ${a.call.area}`.localeCompare(`${b.day.labor_date} ${b.show.name} ${assignmentStart(b.assignment, b.call)} ${b.call.area}`));
         const crewName = item.crew?.name || crewId;
+        const locationSummary = scheduleLocationSummary(sortedCalls.map(({ show, call }) => workLocation(show, call)));
         const firstCall = sortedCalls[0]?.call;
         const callRates = sortedCalls.map(({ show, call, assignment }) => messageRateLabelForCall(item.crew, call, show.rate_city || "Default", liveMasterRates, rateOverrideForAssignment(assignment.id)));
         const uniqueRates = [...new Set(callRates)];
@@ -5321,13 +5322,9 @@ function EventsClientInner({
           const blockText = dayTypeLabel(assignmentDayType(assignment, call));
           const rateText = messageRateLabelForCall(item.crew, call, show.rate_city || "Default", liveMasterRates, rateOverrideForAssignment(assignment.id)).replace(/^Rate:\s*/i, "");
           const showLabel = scheduleExportShows.length > 1 ? ` – ${show.name}` : "";
-          return `${formatMessageDate(day.labor_date)}${showLabel} – ${formatAssignmentMessageTimeRange(assignment, call)} – ${blockText} – ${rateText}`;
+          return `${formatMessageDate(day.labor_date)}${showLabel} – ${formatAssignmentMessageTimeRange(assignment, call)} – ${blockText} – ${rateText}\n  ${workLocationLine(show, call)}\n  MEET-UP: ${workMeetup(show, call, eventMessageMeta(show).meet_up_location || "Confirm with coordinator", callMeetAtBooth(call) ? callBoothMeetupLocation(call) : "")}\n`;
         });
-        const boothMeetups = [...new Set(sortedCalls
-          .filter(({ call }) => callMeetAtBooth(call))
-          .map(({ call }) => callBoothMeetupLocation(call))
-          .filter(Boolean))];
-        const crewMeetupLocation = boothMeetups.length ? boothMeetups.join(" / ") : meta.meet_up_location || "____________________";
+        const crewMeetupLocation = "See the MEET-UP listed under each shift";
         const coordinatorName = currentUserName || currentUserEmail || meta.coordinator_name || "ELS Coordinator";
         const coordinatorLine = `Coordinator: ${coordinatorName}\nEmanuel Labor Services`;
         const projectManagerPhone = formatPhone(selectedClientContact?.cell_phone || selectedClientContact?.phone || "");
@@ -5347,9 +5344,9 @@ function EventsClientInner({
           "",
           `Client: ${selectedShow.client || "Client TBD"}`,
           "",
-          `Hi ${firstName(crewName)} – ${showName} @ ${selectedShow.venue || venueName}`,
+          `Hi ${firstName(crewName)} – ${showName} @ ${locationSummary.venue}`,
           "",
-          selectedShow.event_location || address || selectedShow.rate_city || selectedShow.venue || "",
+          locationSummary.location,
           "",
           `Meet-up Location: ${crewMeetupLocation}`,
           "",
@@ -15076,7 +15073,7 @@ function EventsClientInner({
             <div className="grid grid-2">
               <label className="field"><span>Area</span><input value={callForm.area} onChange={(e) => setCallForm((c) => ({ ...c, area: e.target.value }))} placeholder="Exhibitor, area, general session, breakouts..." /></label>
               <label className="field"><span>Booth</span><input value={callForm.booth_number} onChange={(e) => setCallForm((c) => ({ ...c, booth_number: e.target.value }))} placeholder="106, 2147, TBD..." /></label>
-              <label className="field"><span>Sub-call location</span><input value={callForm.location} onChange={(e) => setCallForm((c) => ({ ...c, location: e.target.value }))} placeholder="Warehouse, hotel, booth hall, room, address..." /></label>
+              <label className="field"><span>Work location for selected days / shifts</span><input value={callForm.location} onChange={(e) => setCallForm((c) => ({ ...c, location: e.target.value }))} placeholder="Venue name + full address; blank uses event location" /><span className="small muted">Shown under every scheduled shift. Select only the dates working at this site; leave other dates at the main event location.</span></label>
               <label className="checkbox-line" style={{ alignSelf: "end" }}>
                 <input
                   type="checkbox"
