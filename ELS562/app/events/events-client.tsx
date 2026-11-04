@@ -5322,9 +5322,9 @@ function EventsClientInner({
           const blockText = dayTypeLabel(assignmentDayType(assignment, call));
           const rateText = messageRateLabelForCall(item.crew, call, show.rate_city || "Default", liveMasterRates, rateOverrideForAssignment(assignment.id)).replace(/^Rate:\s*/i, "");
           const showLabel = scheduleExportShows.length > 1 ? ` – ${show.name}` : "";
-          return `${formatMessageDate(day.labor_date)}${showLabel} – ${formatAssignmentMessageTimeRange(assignment, call)} – ${blockText} – ${rateText}\n  ${workLocationLine(show, call)}\n  MEET-UP: ${workMeetup(show, call, eventMessageMeta(show).meet_up_location || "Confirm with coordinator", callMeetAtBooth(call) ? callBoothMeetupLocation(call) : "")}\n`;
+          return `${formatMessageDate(day.labor_date)}${showLabel} – ${formatAssignmentMessageTimeRange(assignment, call)} – ${blockText} – ${rateText}${locationSummary.multiple ? `\n  ${workLocationLine(show, call)}\n  MEET-UP: ${workMeetup(show, call, eventMessageMeta(show).meet_up_location || "Confirm with coordinator", callMeetAtBooth(call) ? callBoothMeetupLocation(call) : "")}\n` : ""}`;
         });
-        const crewMeetupLocation = "See the MEET-UP listed under each shift";
+        const crewMeetupLocation = locationSummary.multiple ? "See the MEET-UP listed under each shift" : [...new Set(sortedCalls.map(({ show, call }) => workMeetup(show, call, eventMessageMeta(show).meet_up_location || "Confirm with coordinator", callMeetAtBooth(call) ? callBoothMeetupLocation(call) : "")))].join(" / ");
         const coordinatorName = currentUserName || currentUserEmail || meta.coordinator_name || "ELS Coordinator";
         const coordinatorLine = `Coordinator: ${coordinatorName}\nEmanuel Labor Services`;
         const projectManagerPhone = formatPhone(selectedClientContact?.cell_phone || selectedClientContact?.phone || "");

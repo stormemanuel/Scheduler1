@@ -981,7 +981,7 @@ function nextScheduleByCrew(show: ShowRow, days: LaborDayRow[], calls: SubCallRo
   const dayById = new Map(days.map((day) => [day.id, day]));
   const callById = new Map(calls.map((call) => [call.id, call]));
   const meta = parseEventMeta(show.notes);
-  const result = new Map<string, { crew: CrewRow; lines: Array<{ sortKey: string; text: string; area: string; booth: string; dateLabel: string; availabilityText: string; workLocation: string }>; meetUps: string[]; rates: string[]; poNumbers: string[]; areas: string[]; booths: string[]; hasOnSiteReplacement: boolean; firstCall: { day: LaborDayRow; call: SubCallRow; assignment: AssignmentRow } | null; values: Record<string, string> }>();
+  const result = new Map<string, { crew: CrewRow; lines: Array<{ sortKey: string; text: string; area: string; booth: string; dateLabel: string; availabilityText: string; workLocation: string; meetup: string }>; meetUps: string[]; rates: string[]; poNumbers: string[]; areas: string[]; booths: string[]; hasOnSiteReplacement: boolean; firstCall: { day: LaborDayRow; call: SubCallRow; assignment: AssignmentRow } | null; values: Record<string, string> }>();
 
   for (const assignment of [...assignments].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0))) {
     const crew = crewById.get(assignment.crew_id);
@@ -1000,9 +1000,10 @@ function nextScheduleByCrew(show: ShowRow, days: LaborDayRow[], calls: SubCallRo
       area,
       booth,
       dateLabel: formatDate(day.labor_date),
-      availabilityText: `${formatDate(day.labor_date)} · ${assignmentTimeRange(assignment, call)}\n  ${workLocationLine(show, call)}`,
+      availabilityText: `${formatDate(day.labor_date)} · ${assignmentTimeRange(assignment, call)}`,
       workLocation: workLocation(show, call),
-      text: `${formatDate(day.labor_date)} - ${assignmentTimeRange(assignment, call)} - ${blockLabel} - ${rateText}\n  ${workLocationLine(show, call)}\n  MEET-UP: ${workMeetup(show, call, meta.meet_up_location || "Confirm with coordinator", callMeetAtBooth(call) ? callBoothMeetupLocation(call) : "")}`,
+      meetup: workMeetup(show, call, meta.meet_up_location || "Confirm with coordinator", callMeetAtBooth(call) ? callBoothMeetupLocation(call) : ""),
+      text: `${formatDate(day.labor_date)} - ${assignmentTimeRange(assignment, call)} - ${blockLabel} - ${rateText}`,
     });
     if (rateText !== "Rate TBD") current.rates.push(rateText);
     if (safeText(call.po_number)) current.poNumbers.push(safeText(call.po_number));
@@ -1024,8 +1025,8 @@ function nextScheduleByCrew(show: ShowRow, days: LaborDayRow[], calls: SubCallRo
   for (const item of result.values()) {
     const sortedLines = item.lines.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
     const locationSummary = scheduleLocationSummary(sortedLines.map((line) => line.workLocation));
-    const schedule = sortedLines.map((line) => line.text).join("\n\n");
-    const availabilitySchedule = sortedLines.map((line) => line.availabilityText).join("\n");
+    const schedule = sortedLines.map((line) => locationSummary.multiple ? `${line.text}\n  WORK LOCATION: ${line.workLocation}\n  MEET-UP: ${line.meetup}` : line.text).join(locationSummary.multiple ? "\n\n" : "\n");
+    const availabilitySchedule = sortedLines.map((line) => locationSummary.multiple ? `${line.availabilityText}\n  WORK LOCATION: ${line.workLocation}` : line.availabilityText).join("\n");
     const uniqueRates = [...new Set(item.rates)];
     const rate = uniqueRates.length === 1
       ? uniqueRates[0]
@@ -1065,7 +1066,7 @@ function nextScheduleByCrew(show: ShowRow, days: LaborDayRow[], calls: SubCallRo
             .map((assignment) => canonicalLedRoleLabel(callById.get(assignment.sub_call_id)?.role_name || "Crew"))
         : ["Crew"]
     )].join(" / ");
-    const meetUpValue = "See the MEET-UP listed under each shift";
+    const meetUpValue = locationSummary.multiple ? "See the MEET-UP listed under each shift" : [...new Set(sortedLines.map((line) => line.meetup))].join(" / ");
     const nextCall = item.firstCall ? `${formatDate(item.firstCall.day.labor_date)} ${assignmentTimeRange(item.firstCall.assignment, item.firstCall.call)} - ${dayTypeLabel(assignmentDayType(item.firstCall.assignment, item.firstCall.call))}` : "Schedule TBD";
     const nextCallSentence = item.firstCall
       ? `Your call is ${formatReminderDate(item.firstCall.day.labor_date)}, from ${assignmentTimeRange(item.firstCall.assignment, item.firstCall.call)}.\n${workLocationLine(show, item.firstCall.call)}`
