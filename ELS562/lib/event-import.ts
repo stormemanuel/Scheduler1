@@ -29,6 +29,7 @@ export type ImportedEventData = {
   show: {
     name: string;
     show_reference_number?: string;
+    document_type?: "estimate" | "invoice";
     estimate_number?: string;
     estimate_date?: string;
     estimate_total?: number | null;
@@ -296,7 +297,7 @@ function splitEstimateEventField(value: string) {
 }
 
 function looksLikeEstimate(text: string) {
-  return /Bill\s+to/i.test(text) && /Ship\s+to/i.test(text) && /Estimate\s+no\.?/i.test(text) && /Product\s*\/\s*service/i.test(text);
+  return /Bill\s+to/i.test(text) && /Ship\s+to/i.test(text) && /(?:Estimate|Invoice)\s+no\.?/i.test(text) && /Product\s*\/\s*service/i.test(text);
 }
 
 function splitCsvLine(line: string) {
@@ -1052,7 +1053,7 @@ function normalizeBillShipBlock(lines: string[]) {
 }
 
 function extractEstimateBillShip(lines: string[]) {
-  const stopLabels = [/^Ship\s+to$/i, /^Estimate details$/i, /^Bill\s+to$/i, /^#$/i, /^Service Date/i, /^Note to customer$/i, /^Total$/i];
+  const stopLabels = [/^Ship\s+to$/i, /^(?:Estimate|Invoice) details\b/i, /^Bill\s+to$/i, /^#$/i, /^Service Date/i, /^Note to customer$/i, /^Total$/i];
   const billTo = normalizeBillShipBlock(extractFollowingLines(lines, /^Bill\s+to$/i, stopLabels, 4));
   const shipTo = normalizeBillShipBlock(extractFollowingLines(lines, /^Ship\s+to$/i, stopLabels, 4));
   if (billTo.lines.length || shipTo.lines.length) return { billTo, shipTo };
@@ -1268,7 +1269,7 @@ function reconstructEstimateRows(lines: string[]) {
 
 function describeRejectedEstimateRow(line: string) {
   const clean = compactSpaces(line);
-  if (/^(Estimate date|Accepted date)\b/i.test(clean)) return null;
+  if (/^(Estimate date|Invoice date|Due date|Accepted date)\b/i.test(clean)) return null;
   if (!/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(clean)) return null;
   if (!/\$[\d,]+(?:\.\d{2})?/.test(clean)) return `Row rejected: found date but no rate/amount currency values — ${clean}`;
   const currencyCount = (clean.match(/\$[\d,]+(?:\.\d{2})?/g) || []).length;
@@ -1333,6 +1334,8 @@ function parseEstimateLaborLine(line: string, currentGroup: { area: string; boot
 function parseEstimatePdfText(text: string, overrides: Partial<ImportedEventData["show"]>): ImportedEventData | null {
   const lines = preprocessPdfLines(text);
   if (!looksLikeEstimate(lines.join("\n"))) return null;
+  const documentType = /Invoice\s+no\.?\s*:/i.test(text) ? "invoice" : "estimate";
+  const documentLabel = documentType === "invoice" ? "Invoice" : "Estimate";
   const reconstructedRows = reconstructEstimateRows(lines);
   const groupingHeaders: string[] = [];
   const rejectedRows: string[] = [];
@@ -1343,12 +1346,12 @@ function parseEstimatePdfText(text: string, overrides: Partial<ImportedEventData
   const venue = shipTo.name || "";
   const streetAddress = shipTo.streetAddress || "";
   const cityState = parseCityStateFromAddress(shipTo.cityState || "");
-  const estimateNoLine = lines.find((line) => /^Estimate no\.?\s*:/i.test(line)) || "";
-  const estimateNoMatch = estimateNoLine.match(/^Estimate no\.?\s*:\s*([^\s(]+)(?:\s*\(([^)]+)\))?/i);
+  const estimateNoLine = lines.find((line) => /^(?:Estimate|Invoice) no\.?\s*:/i.test(line)) || "";
+  const estimateNoMatch = estimateNoLine.match(/^(?:Estimate|Invoice) no\.?\s*:\s*([^\s(]+)(?:\s*\(([^)]+)\)|\s+(.+))?/i);
   const estimateNumber = compactSpaces(estimateNoMatch?.[1] || "");
-  const estimateReference = compactSpaces(estimateNoMatch?.[2] || "");
-  const estimateDateLine = lines.find((line) => /^Estimate date\s*:/i.test(line)) || "";
-  const estimateDateRaw = compactSpaces(estimateDateLine.replace(/^Estimate date\s*:\s*/i, ""));
+  const estimateReference = compactSpaces(estimateNoMatch?.[2] || estimateNoMatch?.[3] || "");
+  const estimateDateLine = lines.find((line) => /^(?:Estimate|Invoice) date\s*:/i.test(line)) || "";
+  const estimateDateRaw = compactSpaces(estimateDateLine.replace(/^(?:Estimate|Invoice) date\s*:\s*/i, ""));
   const eventLine = lines.find((line) => /\bEvent\s*:/i.test(line)) || "";
   const eventParts = splitEstimateEventField(eventLine.replace(/^.*?\bEvent\s*:\s*/i, ""));
   const totalLineIndex = lines.findIndex((line) => /^Total$/i.test(line));
@@ -1358,7 +1361,7 @@ function parseEstimatePdfText(text: string, overrides: Partial<ImportedEventData
   const estimateDate = estimateDateRaw ? parseImportDate(estimateDateRaw, fallbackYear) : "";
 
   if (eventParts.showReference && estimateReference && normalize(eventParts.showReference) !== normalize(estimateReference)) {
-    needsReview.push(`Show Reference Number mismatch: Event ${eventParts.showReference}; Estimate ${estimateReference}`);
+    needsReview.push(`Show Reference Number mismatch: Event ${eventParts.showReference}; ${documentLabel} ${estimateReference}`);
   }
 
   const rows: ImportedCrewRow[] = [];
@@ -1367,6 +1370,7 @@ function parseEstimatePdfText(text: string, overrides: Partial<ImportedEventData
 
   for (const rawLine of reconstructedRows) {
     const line = compactSpaces(rawLine);
+    if (/^(?:Total|Balance due|Deposit|Note to customer|ACH to account)\b/i.test(line)) break;
     if (!line || /^Service DateProduct/i.test(line) || /^#$/i.test(line)) continue;
     if (/^Subtotal\b/i.test(line) && !stripEstimateSubtotalPrefix(line)) {
       currentGroup.area = "";
@@ -1432,7 +1436,7 @@ function parseEstimatePdfText(text: string, overrides: Partial<ImportedEventData
 
   if (!rows.length) {
     const debug = estimateImportDebug(lines, reconstructedRows, groupingHeaders, rejectedRows);
-    throw new Error(`QuickBooks estimate import could not find labor rows. Debug: ${JSON.stringify(debug)}`);
+    throw new Error(`QuickBooks ${documentType} import could not find labor rows. Debug: ${JSON.stringify(debug)}`);
   }
 
   if (!client) needsReview.push("Missing client");
@@ -1440,7 +1444,7 @@ function parseEstimatePdfText(text: string, overrides: Partial<ImportedEventData
   if (!eventParts.eventName) needsReview.push("Missing event name");
   if (!cityState.city || !cityState.state) needsReview.push("No exact crew pool match found");
   const parsedLineTotal = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-  if (estimateTotal != null && Math.abs(parsedLineTotal - estimateTotal) > 0.01) needsReview.push("Estimate total does not match parsed lines");
+  if (estimateTotal != null && Math.abs(parsedLineTotal - estimateTotal) > 0.01) needsReview.push(`${documentLabel} total does not match parsed lines`);
 
   const dates = rows.map((row) => row.date).sort();
   const showReference = compactSpaces(overrides.show_reference_number || eventParts.showReference || estimateReference);
@@ -1448,6 +1452,7 @@ function parseEstimatePdfText(text: string, overrides: Partial<ImportedEventData
     show: {
       name: compactSpaces(overrides.name || eventParts.eventName || "Imported Event"),
       show_reference_number: showReference,
+      document_type: documentType,
       estimate_number: estimateNumber,
       estimate_date: estimateDate,
       estimate_total: estimateTotal,

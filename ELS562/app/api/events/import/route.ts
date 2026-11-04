@@ -741,7 +741,7 @@ export async function POST(request: Request) {
         mode === "merge"
           ? `Merged import into ${showRow.name}. Added ${createdLaborDays.length} labor days, ${createdSubCalls.length} sub-calls, updated ${updatedSubCallCount} existing sub-calls, and assigned ${assignmentRows.length} matched crew${preview.unmatchedCrewCount ? `, ${preview.unmatchedCrewCount} unmatched` : ""}.`
           : preview.importFormat === "estimate"
-            ? `Imported estimate for ${showRow.name}. Created ${allLaborDays.length} labor days and ${existingSubCalls.length + createdSubCalls.length} sub-calls. No crew were assigned and no messages were queued.`
+            ? `Imported ${preview.payload.show.document_type === "invoice" ? "invoice" : "estimate"} for ${showRow.name}. Created ${allLaborDays.length} labor days and ${existingSubCalls.length + createdSubCalls.length} sub-calls. No crew were assigned and no messages were queued.`
             : `Imported ${showRow.name}. Created ${allLaborDays.length} labor days, ${existingSubCalls.length + createdSubCalls.length} sub-calls, and assigned ${assignmentRows.length} matched crew${preview.unmatchedCrewCount ? `, ${preview.unmatchedCrewCount} unmatched` : ""}.`,
       show: showRow,
       laborDays: allLaborDays,

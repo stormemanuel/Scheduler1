@@ -659,6 +659,7 @@ type ImportPreviewState = {
   show: {
     name: string;
     show_reference_number?: string;
+    document_type?: "estimate" | "invoice";
     estimate_number?: string;
     estimate_date?: string;
     estimate_total?: number | null;
@@ -15732,7 +15733,7 @@ function EventsClientInner({
               style={{ borderStyle: "dashed" }}
             >
               <div className="small muted">
-                Drag a CSV or PDF here, preview first, then create new or merge into the selected event.
+                Drag a crew-list CSV/PDF or QuickBooks estimate/invoice PDF here. Preview first, then create new or merge into the selected event.
               </div>
               <div className="toolbar" style={{ marginTop: 10 }}>
                 <button type="button" className="ghost" onClick={() => fileInputRef.current?.click()}>
@@ -15944,8 +15945,8 @@ function EventsClientInner({
                       <div className="small muted" style={{ marginTop: 6 }}>Client: <strong>{importPreview.show.client || "Missing"}</strong></div>
                       <div className="small muted">Event: <strong>{importPreview.show.name || "Missing"}</strong></div>
                       <div className="small muted">Show Reference: <strong>{importPreview.show.show_reference_number || "Missing"}</strong></div>
-                      {importPreview.show.estimate_number ? <div className="small muted">Estimate: <strong>{importPreview.show.estimate_number}</strong></div> : null}
-                      {importPreview.show.estimate_date ? <div className="small muted">Estimate date: <strong>{importPreview.show.estimate_date}</strong></div> : null}
+                      {importPreview.show.estimate_number ? <div className="small muted">{importPreview.show.document_type === "invoice" ? "Invoice" : "Estimate"}: <strong>{importPreview.show.estimate_number}</strong></div> : null}
+                      {importPreview.show.estimate_date ? <div className="small muted">{importPreview.show.document_type === "invoice" ? "Invoice" : "Estimate"} date: <strong>{importPreview.show.estimate_date}</strong></div> : null}
                       <div className="small muted">Show dates: <strong>{importPreview.show.show_start || "Missing"} to {importPreview.show.show_end || "Missing"}</strong></div>
                       <div className="small muted">Venue: <strong>{importPreview.show.venue || "Missing"}</strong></div>
                       <div className="small muted">Location: <strong>{importPreview.show.event_location || "Missing"}</strong></div>
@@ -15962,11 +15963,11 @@ function EventsClientInner({
                       </div>
                       {importPreview.show.estimate_total != null || importPreview.show.parsed_line_total != null ? (
                         <>
-                          <div className="small muted">Estimate Total: <strong>{moneyLabel(importPreview.show.estimate_total)}</strong></div>
+                          <div className="small muted">{importPreview.show.document_type === "invoice" ? "Invoice" : "Estimate"} Total: <strong>{moneyLabel(importPreview.show.estimate_total)}</strong></div>
                           <div className="small muted">Parsed Line Total: <strong>{moneyLabel(importPreview.show.parsed_line_total)}</strong></div>
                           {importPreview.show.estimate_total != null && importPreview.show.parsed_line_total != null ? (
                             <div className={Math.abs(Number(importPreview.show.estimate_total) - Number(importPreview.show.parsed_line_total)) <= 0.01 ? "success small" : "error small"}>
-                              {Math.abs(Number(importPreview.show.estimate_total) - Number(importPreview.show.parsed_line_total)) <= 0.01 ? "Total verified" : "Estimate total does not match parsed lines"}
+                              {Math.abs(Number(importPreview.show.estimate_total) - Number(importPreview.show.parsed_line_total)) <= 0.01 ? "Total verified" : "Document total does not match parsed lines"}
                             </div>
                           ) : null}
                         </>
