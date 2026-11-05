@@ -30,3 +30,9 @@ export function workMeetup(show: LocationShow, call: LocationCall, defaultMeetup
   if (clean(call.location) && workLocation(show, call).toLowerCase() !== workLocation(show, {}).toLowerCase()) return `At ${workLocation(show, call)} — confirm the exact meeting point with your coordinator`;
   return defaultMeetup;
 }
+
+/** Saved schedule templates used to repeat the full venue/address in the greeting. */
+export function normalizeScheduleLocationGreeting(template: string) {
+  if (!/\{location\}/i.test(template)) return template;
+  return template.replace(/(\{show_name\})[ \t]*@[ \t]*\{venue\}/gi, "$1");
+}

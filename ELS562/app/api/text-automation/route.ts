@@ -1,4 +1,4 @@
-import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup } from "@/lib/schedule-locations";
+import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting } from "@/lib/schedule-locations";
 import { processCoordinatorPurchaseOrders } from "@/lib/coordinator-purchase-orders";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
 import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
@@ -855,10 +855,10 @@ function normalizeReminderTemplate(value: unknown) {
 
 function normalizeScheduleTemplate(value: unknown) {
   const text = safeText(value);
-  const cleaned = text.replace(/,\s*as requested by the client\./gi, ".");
+  const cleaned = normalizeScheduleLocationGreeting(text.replace(/,\s*as requested by the client\./gi, "."));
   const oldDefault = "Hi {first_name}, this is {coordinator_name} with Emanuel Labor Services. Here is your schedule for {show_name}:\n\n{schedule}\n\nMeet-up Location: {meet_up_location}\nRate: {rate}\nAttire: black polo, black pants, black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nPlease confirm.";
   const priorDefault = "Hi {first_name} – {show_name} @ {venue}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\nRate: {rate}\n\nSchedule:\n{schedule}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nPlease confirm.";
-  if (!cleaned || cleaned === oldDefault || cleaned === priorDefault) return defaultScheduleTemplate;
+  if (!cleaned || cleaned === oldDefault || cleaned === normalizeScheduleLocationGreeting(priorDefault)) return defaultScheduleTemplate;
   let normalized = ensureScheduleTemplateDisclaimers(cleaned);
   if (!/\{project_manager_line\}/i.test(normalized)) {
     normalized = /\{crew_lead_line\}/i.test(normalized)
@@ -874,7 +874,7 @@ const scheduleDateDisclaimer = "Dates and times are subject to change.";
 const updatedScheduleNotice = "*****UPDATED SCHEDULE PLEASE CONFIRM CHANGES*****";
 const scheduleLateHourlyDisclaimer = "If anyone is 15 minutes late or more, that shift will be paid hourly.";
 const onSiteReplacementSummary = "On-site Replacement: You must be onsite and at the listed meet-up location on time, ready to work. If you are not used, you will receive a flat $50 show-up payment. If you are used to replace a scheduled crew member, the $50 show-up payment is waived and you will be paid the rate for the shift and position you work.";
-const defaultScheduleTemplate = `Hi {first_name} – {show_name} @ {venue}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\n{booth_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`;
+const defaultScheduleTemplate = `Hi {first_name} – {show_name}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\n{booth_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`;
 const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name} at {venue}.\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 const defaultDayOfReminderTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nSee you soon. Please confirm.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 const defaultDailyAfterFirstDayTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";

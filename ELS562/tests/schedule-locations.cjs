@@ -45,6 +45,9 @@ check('single-location schedule keeps address and meetup out of daily lines',()=
 vm.runInContext(js('var singleOutput=('+memo+')()'),clientContext);
 const singleClient=vm.runInContext('singleOutput[0]',clientContext).text;
 check('single-location copy and export keep meetup at top instead of each day',()=>{const body=singleClient.split('Schedule:')[1];assert.ok(!body.includes('WORK LOCATION'));assert.ok(!body.includes('MEET-UP'));assert.ok(singleClient.includes('Meet-up Location: Main lobby'));assert.ok(!singleClient.includes('See the MEET-UP listed under each shift'));assert.ok(!singleClient.includes('WORK LOCATION CHANGES BY SHIFT'));});
+check('single-location preview and exports display full address once',()=>{assert.equal(singleClient.split('Convention Center — 100 Main St').length-1,1);assert.ok(singleClient.includes('Hi Alex – Event\n'));});
+check('saved schedule template drops repeated venue from greeting',()=>{const template='Hi {first_name} – {show_name} @ {venue}\n\n{location}\n\n{schedule}';const normalized=locations.normalizeScheduleLocationGreeting(template);const rendered=normalized.replace(/\{(\w+)\}/g,(_,key)=>single[key]||'');assert.equal(rendered.split('Convention Center — 100 Main St').length-1,1);assert.ok(!normalized.includes('@ {venue}'));});
+check('venue-only custom templates retain their location',()=>{const template='Hi {first_name} – {show_name} @ {venue}\n{schedule}';assert.equal(locations.normalizeScheduleLocationGreeting(template),template);});
 calls[0].location=old;calls[1].location=old;
 const secondaryOnly=run().get('crew').values;
 check('one secondary site also appears only in header',()=>{assert.ok(!secondaryOnly.schedule.includes('WORK LOCATION'));assert.ok(!secondaryOnly.schedule.includes('MEET-UP'));assert.match(secondaryOnly.location,/Warehouse/);assert.match(secondaryOnly.meet_up_location,/Warehouse/);assert.ok(!secondaryOnly.meet_up_location.includes('Main lobby'));});

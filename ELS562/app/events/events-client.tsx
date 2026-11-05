@@ -1,6 +1,6 @@
 "use client";
 
-import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup } from "@/lib/schedule-locations";
+import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting } from "@/lib/schedule-locations";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
 
 import { Component, Fragment, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
@@ -453,7 +453,7 @@ const defaultScheduleTemplate = `${scheduleHeader}
 
 Client: {client}
 
-Hi {first_name} – {show_name} @ {venue}
+Hi {first_name} – {show_name}
 
 {location}
 
@@ -583,10 +583,10 @@ function normalizeReminderTemplateForDisplay(value: string | null | undefined) {
 
 function normalizeScheduleTemplateForDisplay(value: string | null | undefined) {
   const text = String(value || "").trim();
-  const cleaned = text.replace(/,\s*as requested by the client\./gi, ".");
+  const cleaned = normalizeScheduleLocationGreeting(text.replace(/,\s*as requested by the client\./gi, "."));
   const oldDefault = "Hi {first_name}, this is {coordinator_name} with Emanuel Labor Services. Here is your schedule for {show_name}:\n\n{schedule}\n\nMeet-up Location: {meet_up_location}\nRate: {rate}\nAttire: black polo, black pants, black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nPlease confirm.";
   const priorDefault = "Hi {first_name} – {show_name} @ {venue}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\nRate: {rate}\n\nSchedule:\n{schedule}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nPlease confirm.";
-  if (!cleaned || cleaned === oldDefault || cleaned === priorDefault) return defaultScheduleTemplate;
+  if (!cleaned || cleaned === oldDefault || cleaned === normalizeScheduleLocationGreeting(priorDefault)) return defaultScheduleTemplate;
   return ensureScheduleTemplateDisclaimers(cleaned);
 }
 
@@ -5344,7 +5344,7 @@ function EventsClientInner({
           "",
           `Client: ${selectedShow.client || "Client TBD"}`,
           "",
-          `Hi ${firstName(crewName)} – ${showName} @ ${locationSummary.venue}`,
+          `Hi ${firstName(crewName)} – ${showName}`,
           "",
           locationSummary.location,
           "",
