@@ -1,3 +1,4 @@
+import { cleanAvailabilityMessage } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
 import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting } from "@/lib/schedule-locations";
 import { processCoordinatorPurchaseOrders } from "@/lib/coordinator-purchase-orders";
@@ -828,7 +829,7 @@ function normalizeAvailabilityTemplate(value: unknown) {
   const oldNeededDefault = "Hello {first_name}, are you available for {show_name}?\n\nPosition: {position}\nArea: {area}\nRate: {rate}\nNeeded: {availability_schedule}\n\nPlease respond ASAP, as the positions are filled quickly.";
   const oldDatesNeededDefault = "Hello {first_name}, are you available for {show_name}?\n\nPosition: {position}\nArea: {area}\nRate: {rate}\nDates Needed:\n{availability_schedule}\n\nPlease respond ASAP, as the positions are filled quickly.";
   if (!text || text === oldDefault || text === priorDefault || text === oldNeededDefault || text === oldDatesNeededDefault) return defaultAvailabilityTemplate;
-  return text
+  return cleanAvailabilityMessage(text)
     .replace(/(?:Dates\s+Needed|Needed):\s*\{availability_schedule\}/i, "Checking availability for these dates:\n{availability_schedule}")
     .replace(/^\s*Rate\s*:\s*.*$/gim, "Rate: {rate}");
 }
@@ -869,7 +870,7 @@ function normalizeScheduleTemplate(value: unknown) {
   return normalized;
 }
 
-const defaultAvailabilityTemplate = "Hello {first_name}, are you available for {show_reference}?\n\nPosition: {position}\nArea: {area}\nVenue: {venue_or_location}\nRate: {rate}\n\nChecking availability for these dates:\n{availability_schedule}\n\nI have some days in between that range that I am booking.\n\nPlease respond ASAP, as the positions are filled quickly.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services.";
+const defaultAvailabilityTemplate = "Hello {first_name}, are you available for {show_reference}?\n\nPosition: {position}\nArea: {area}\nVenue: {venue_or_location}\nRate: {rate}\n\nChecking availability for these dates:\n{availability_schedule}\n\nPlease respond ASAP, as the positions are filled quickly.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services.";
 const scheduleHeader = "Emanuel Labor Services Labor Call";
 const scheduleDateDisclaimer = "Dates and times are subject to change.";
 const updatedScheduleNotice = "*****UPDATED SCHEDULE PLEASE CONFIRM CHANGES*****";
@@ -2112,7 +2113,7 @@ async function queueAvailabilityCandidates(
 ) {
   const showId = safeText(body.show_id || (body.settings as Record<string, unknown> | undefined)?.show_id);
   const crewIds: string[] = cleanQueueIds(body.crew_ids, Number.POSITIVE_INFINITY);
-  const template = safeText(body.body);
+  const template = cleanAvailabilityMessage(safeText(body.body));
   if (!showId) throw new Error("show_id is required.");
   if (!crewIds.length) throw new Error("Select at least one crew member first.");
   if (crewIds.length > 500) throw new Error("Select at most 500 crew members per availability batch. No messages queued.");

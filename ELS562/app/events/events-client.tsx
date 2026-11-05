@@ -1,5 +1,6 @@
 "use client";
 
+import { cleanAvailabilityMessage } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
 import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting } from "@/lib/schedule-locations";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
@@ -445,7 +446,7 @@ const automationReminderOptions: Array<{ key: AutomationReminderKey; label: stri
   { key: "reminder_daily_after_first_day", label: "Daily reminder after first day · 2 hours before each scheduled call", helper: "Sends a short confirmation message two hours before each scheduled workday after the crew member’s first labor day." },
 ];
 
-const defaultAvailabilityTemplate = "Hello {first_name}, are you available for {show_reference}?\n\nPosition: {position}\nArea: {area}\nVenue: {venue_or_location}\nRate: {rate}\n\nChecking availability for these dates:\n{availability_schedule}\n\nI have some days in between that range that I am booking.\n\nPlease respond ASAP, as the positions are filled quickly.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services.";
+const defaultAvailabilityTemplate = "Hello {first_name}, are you available for {show_reference}?\n\nPosition: {position}\nArea: {area}\nVenue: {venue_or_location}\nRate: {rate}\n\nChecking availability for these dates:\n{availability_schedule}\n\nPlease respond ASAP, as the positions are filled quickly.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services.";
 const scheduleHeader = "Emanuel Labor Services Labor Call";
 const scheduleDateDisclaimer = "Dates and times are subject to change.";
 const scheduleLateHourlyDisclaimer = "If anyone is 15 minutes late or more, that shift will be paid hourly.";
@@ -564,7 +565,7 @@ function normalizeAvailabilityTemplateForDisplay(value: string | null | undefine
   const oldNeededDefault = "Hello {first_name}, are you available for {show_name}?\n\nPosition: {position}\nArea: {area}\nRate: {rate}\nNeeded: {availability_schedule}\n\nPlease respond ASAP, as the positions are filled quickly.";
   const oldDatesNeededDefault = "Hello {first_name}, are you available for {show_name}?\n\nPosition: {position}\nArea: {area}\nRate: {rate}\nDates Needed:\n{availability_schedule}\n\nPlease respond ASAP, as the positions are filled quickly.";
   if (!text || text === oldDefault || text === priorDefault || text === oldNeededDefault || text === oldDatesNeededDefault) return defaultAvailabilityTemplate;
-  return text
+  return cleanAvailabilityMessage(text)
     .replace(/(?:Dates\s+Needed|Needed):\s*\{availability_schedule\}/i, "Checking availability for these dates:\n{availability_schedule}")
     .replace(/^\s*Rate\s*:\s*.*$/gim, "Rate: {rate}");
 }
@@ -3202,7 +3203,7 @@ function unknownAvailabilityPlaceholders(template: string) {
 }
 
 function applyAvailabilityTemplatePreview(template: string, values: Record<string, string>) {
-  let text = template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, key: string) => values[key] ?? "");
+  let text = cleanAvailabilityMessage(template).replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, key: string) => values[key] ?? "");
   const rate = safeText(values.rate);
   if (rate && rate !== "Choose rate") {
     text = text.replace(/^\s*Rate\s*:\s*.*$/gim, `Rate: ${rate}`);
