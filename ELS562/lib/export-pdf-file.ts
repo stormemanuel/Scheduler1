@@ -6,7 +6,7 @@ const text = (value: ExportCell) => String(value ?? "").replace(/[–—]/g, "-"
 export async function createExportPdf(document: ExportDocument, logo?: string): Promise<Blob> {
   const [{ jsPDF }, { autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
   const wide = document.layout === "wide-table" || document.sections.some(section => (section.columns?.length || 0) >= 6);
-  const pdf = new jsPDF({ orientation: wide ? "landscape" : "portrait", unit: "pt", format: "letter", compress: true });
+  const pdf = new jsPDF({ orientation: document.pdfOrientation || (wide ? "landscape" : "portrait"), unit: "pt", format: "letter", compress: true });
   pdf.setProperties({ title: document.title, author: "Emanuel Labor Services" });
   const margin = 30, width = pdf.internal.pageSize.getWidth(), height = pdf.internal.pageSize.getHeight();
   let y = margin;
@@ -31,7 +31,13 @@ export async function createExportPdf(document: ExportDocument, logo?: string): 
     if (section.subheading) write(section.subheading, 9);
     for (const paragraph of section.paragraphs || []) { write(paragraph, 10); y += 5; }
     if (section.columns?.length) {
+      const columnStyles = document.pdfOrientation === "portrait" ? Object.fromEntries(section.columns.map((column, index) => {
+        const weight = (name: string) => /date|time/i.test(name) ? 1.8 : /name|notes|email/i.test(name) ? 1.4 : /area|subgroup/i.test(name) ? 1.3 : /contact|phone/i.test(name) ? 1.2 : 1;
+        const total = section.columns!.reduce((sum, name) => sum + weight(name), 0);
+        return [index, { cellWidth: (width - margin * 2) * weight(column) / total }];
+      })) : {};
       autoTable(pdf, {
+        columnStyles,
         startY: y + 5, margin: { left: margin, right: margin, top: margin, bottom: margin + 15 },
         head: [section.columns.map(text)], body: section.rows?.length ? section.rows.map(row => section.columns!.map((_, index) => text(row[index]))) : [[{ content: "No rows found.", colSpan: section.columns.length }]],
         theme: "grid", showHead: "everyPage", rowPageBreak: "avoid",

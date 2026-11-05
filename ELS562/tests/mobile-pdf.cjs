@@ -3,14 +3,15 @@ const root=path.resolve(__dirname,'..');
 const compile=source=>ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 function load(file){const exports={};vm.runInNewContext(compile(fs.readFileSync(path.join(root,file),'utf8')),{exports,require,Blob,File,Uint8Array,atob,btoa});return exports;}
 const generator=load('lib/export-pdf-file.ts'),exportsModule=load('lib/export-documents.ts');
-const fixture={layout:'call-sheet',title:'Emanuel Labor Services Labor Call List',meta:[['Client','NMR Events'],['Event','MOBILE TEST'],['Venue','Test Convention Center'],['Location','100 Test St']],sections:[{heading:'Test Booth - Day 1',subheading:'Booth 20 - test crew',columns:['Name','Date / Times','Position','Contact Number','Status','Notes'],rows:Array.from({length:180},(_,i)=>['Worker '+String(i+1).padStart(3,'0'),'2026-11-05 08:00-18:00','General AV','555-0100','Confirmed',i===179?'LAST ROW MUST BE INCLUDED':'Test notes']),rowKinds:Array.from({length:180},()=> 'data')},{heading:'Day 2',columns:['Name','Times','Status'],rows:[['Final Worker','09:00-19:00','Confirmed']]}]};
+const fixture={layout:'call-sheet',pdfOrientation:'portrait',title:'Emanuel Labor Services Labor Call List',meta:[['Client','NMR Events'],['Event','MOBILE TEST'],['Venue','Test Convention Center'],['Location','100 Test St']],sections:[{heading:'Test Booth - Day 1',subheading:'Booth 20 - test crew',columns:['Name','Date / Times','Position','Contact Number','Status','Notes'],rows:Array.from({length:180},(_,i)=>['Worker '+String(i+1).padStart(3,'0'),'2026-11-05 08:00-18:00','General AV','555-0100','Confirmed',i===179?'LAST ROW MUST BE INCLUDED':'Test notes']),rowKinds:Array.from({length:180},()=> 'data')},{heading:'Day 2',columns:['Name','Times','Status'],rows:[['Final Worker','09:00-19:00','Confirmed']]}]};
 let passed=0;function check(name,fn){fn();passed++;console.log('PASS '+name);}
 (async()=>{
  const pdf=await generator.createExportPdf(fixture,exportsModule.ELS_EXPORT_LOGO_DATA_URI);const bytes=Buffer.from(await pdf.arrayBuffer());
  if(process.env.PDF_TEST_OUTPUT)fs.writeFileSync(process.env.PDF_TEST_OUTPUT,bytes);
+ check('crew-list PDF uses portrait letter pages despite six table columns',()=>assert.match(bytes.toString('latin1'),/\/MediaBox\s*\[0 0 612(?:\.0*)? 792(?:\.0*)?\]/));
  check('export is a genuine PDF file, not HTML',()=>{assert.equal(pdf.type,'application/pdf');assert.equal(bytes.subarray(0,5).toString(),'%PDF-');});
  const parsed=await require('pdf-parse/lib/pdf-parse.js')(bytes);
- check('long crew list paginates and retains first and last workers',()=>{assert.ok(parsed.numpages>1);for(const name of ['Worker 001','Worker 180','Final Worker','LAST ROW MUST BE INCLUDED'])assert.ok(parsed.text.includes(name),name);});
+ check('long crew list paginates and retains first and last workers',()=>{assert.ok(parsed.numpages>1);for(const name of ['Worker 001','Worker 180','Final Worker','LAST ROW MUST BE INCLUDED'])assert.ok(parsed.text.replace(/\s+/g,' ').includes(name),name);});
  check('PDF retains show metadata and section headings',()=>{for(const label of ['MOBILE TEST','NMR Events','100 Test St','Test Booth - Day 1','Day 2'])assert.ok(parsed.text.includes(label),label);});
  if(process.env.BROWSER_TEST_MODULES){
   const {build}=require(path.join(process.env.BROWSER_TEST_MODULES,'esbuild'));

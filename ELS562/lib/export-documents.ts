@@ -14,6 +14,7 @@ export type ExportSection = {
 };
 
 export type ExportDocument = {
+  pdfOrientation?: "portrait" | "landscape";
   layout?: "standard" | "wide-table" | "call-sheet" | "cover-sheet";
   showLogo?: boolean;
   title: string;

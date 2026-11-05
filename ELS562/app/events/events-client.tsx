@@ -9168,6 +9168,7 @@ function EventsClientInner({
 
     return {
       layout: "call-sheet",
+      pdfOrientation: "portrait",
       title: "Emanuel Labor Services Labor Call List",
       meta: [
         ["Client", selectedShow.client || ""],
