@@ -7,6 +7,9 @@ const clean=exportsObj.cleanAvailabilityMessage;
 for(const line of ['I have some days in between this span that I am looking to book for December.','I have some days in between that range that I am booking.',"I have some days between those dates I’m looking to get filled."]){assert.equal(clean('Dates:\n12/5\n\n'+line+'\n\nPlease respond ASAP.'),'Dates:\n12/5\n\nPlease respond ASAP.');}
 assert.equal(clean('Custom instructions.\nPlease respond ASAP.'),'Custom instructions.\nPlease respond ASAP.');
 console.log('PASS retired availability sentence removed from saved wording; dates and custom instructions preserved');
+assert.equal(clean('Rate: $35/hr\nChecking Availability :\n12/10/26'),'Rate: $35/hr\n\nChecking Availability :\n12/10/26');
+assert.equal(clean('Rate: {rate}\n\nChecking availability for these dates:\n{availability_schedule}'),'Rate: {rate}\n\nChecking availability for these dates:\n{availability_schedule}');
+console.log('PASS availability rate is separated from dates by exactly one blank line');
 const ast=ts.createSourceFile('route.ts',fs.readFileSync(root+'app/api/text-automation/route.ts','utf8'),ts.ScriptTarget.Latest,true);
 const names=['cleanQueueIds','readAvailabilityRows','validateAvailabilityBookings','queueAvailabilityCandidates','assignmentStartTime','assignmentEndTime'];const fns=[];
 function walk(n){if(ts.isFunctionDeclaration(n)&&names.includes(n.name?.text))fns.push(n.getText(ast));ts.forEachChild(n,walk);}walk(ast);
