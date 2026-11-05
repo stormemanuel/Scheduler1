@@ -29,7 +29,7 @@ import { ASSIGNMENT_RATE_OVERRIDE_NOTE_CODE, assignmentRateOverrideFromNotes, co
 import { dayTypeFromDurationHours } from "@/lib/payroll-calculations";
 import { halfDayFromFullDay, type MasterRateRecord } from "@/lib/rates-types";
 import type { AppUserSummaryRecord, BusinessClientRecord, ClientContactRecord, TechRatingRecord } from "@/lib/client-types";
-import { ELS_EXPORT_LOGO_DATA_URI, exportDocumentDocxQueued, exportDocumentPdf, exportDocumentPdfQueued, type ExportCell, type ExportDocument } from "@/lib/export-documents";
+import { ELS_EXPORT_LOGO_DATA_URI, exportDocumentPdfFile, exportDocumentDocxQueued, exportDocumentPdf, exportDocumentPdfQueued, type ExportCell, type ExportDocument } from "@/lib/export-documents";
 import type { CoordinatorScheduleStatusRecord } from "@/lib/events-data";
 
 type Props = {
@@ -9709,7 +9709,7 @@ function EventsClientInner({
     }
   }
 
-  function exportCrewListPdf(includeEmail = false, coordinatorUserId = "") {
+  async function exportCrewListPdf(includeEmail = false, coordinatorUserId = "") {
     if (!selectedShow) { setMsg({ kind: "error", text: "Select a show first." }); return; }
     const document = buildCrewListDocument({ includeEmail, coordinatorUserId });
     if (!document) {
@@ -9719,9 +9719,9 @@ function EventsClientInner({
     }
     try {
       setExportJob({ label: "Crew list PDF", status: "exporting" });
-      exportDocumentPdf(document, `${selectedShow.name}_${eventDisplayMode}_crew_list`);
+      await exportDocumentPdfFile(document, `${selectedShow.name}_${eventDisplayMode}_crew_list`);
       setExportJob({ label: "Crew list PDF", status: "complete" });
-      setMsg({ kind: "success", text: "Crew list PDF opened. Choose Save as PDF in the print window." });
+      setMsg({ kind: "success", text: "Crew list ready. Use Save PDF or Share PDF in the preview." });
       window.setTimeout(() => setExportJob((current) => current?.label === "Crew list PDF" ? null : current), 3000);
     } catch (error) {
       setExportJob(null);

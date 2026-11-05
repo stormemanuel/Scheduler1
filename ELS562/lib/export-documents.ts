@@ -353,6 +353,59 @@ export function exportDocumentPdf(document: ExportDocument, filenameBase?: strin
   }, 350);
 }
 
+/** Crew-list preview with an actual PDF and native file sharing on supported phones. */
+export async function exportDocumentPdfFile(document: ExportDocument, filenameBase?: string) {
+  // Open during the original tap, before loading the PDF libraries.
+  const win = window.open("", "_blank");
+  const filename = safeFilename(filenameBase || document.title, "pdf");
+  let status: HTMLElement | null = null;
+  if (win) {
+    const actions = `<button type="button" id="pdf-back" class="secondary">Back to ELS Scheduler</button>
+      <a id="pdf-save" hidden>Save PDF</a><button type="button" id="pdf-share" disabled>Share PDF</button>
+      <a id="pdf-open" hidden target="_blank" rel="noopener">Open PDF</a>
+      <button type="button" id="pdf-print">Print</button><span id="pdf-status" role="status">Preparing PDF…</span>`;
+    const html = buildExportHtml(document).replace(/<div class="screen-actions">[\s\S]*?<\/div>/, `<div class="screen-actions">${actions}</div>`)
+      .replace('<meta charset="utf-8" />', '<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />')
+      .replace('</style>', '.screen-actions{flex-wrap:wrap;align-items:center}.screen-actions a{background:#07313b;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:bold}.screen-actions [hidden]{display:none}.screen-actions #pdf-status{font-size:13px}.screen-actions button:disabled{opacity:.5}</style>');
+    win.document.open(); win.document.write(html); win.document.close(); win.document.title = filename;
+    win.document.getElementById("pdf-back")!.onclick = () => { if (win.opener && !win.opener.closed) win.close(); else win.location.assign("/events"); };
+    win.document.getElementById("pdf-print")!.onclick = () => { win.focus(); win.print(); };
+    status = win.document.getElementById("pdf-status");
+  }
+  try {
+    const { createExportPdf } = await import("@/lib/export-pdf-file");
+    const blob = await createExportPdf(document, ELS_EXPORT_LOGO_DATA_URI);
+    const url = URL.createObjectURL(blob);
+    if (!win || win.closed) {
+      const link = window.document.createElement("a"); link.href = url; link.download = filename;
+      window.document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return;
+    }
+    const save = win.document.getElementById("pdf-save") as HTMLAnchorElement;
+    save.href = url; save.download = filename; save.hidden = false;
+    const open = win.document.getElementById("pdf-open") as HTMLAnchorElement;
+    open.href = url; open.hidden = false;
+    const file = new File([blob], filename, { type: "application/pdf" });
+    const share = win.document.getElementById("pdf-share") as HTMLButtonElement;
+    const canShare = typeof win.navigator.share === "function" && typeof win.navigator.canShare === "function" && win.navigator.canShare({ files: [file] });
+    share.hidden = !canShare; share.disabled = !canShare;
+    if (status) status.textContent = canShare ? "PDF ready. Share to Messages, Mail, or Save to Files." : "PDF ready. Save PDF or Open PDF, then use your browser’s Share menu.";
+    share.onclick = () => {
+      // The file is ready before this tap so iOS retains the user gesture.
+      void win.navigator.share({ files: [file], title: document.title }).then(() => {
+        if (status) status.textContent = "PDF shared.";
+      }).catch((error: unknown) => {
+        if (status) status.textContent = (error as { name?: string } | null)?.name === "AbortError" ? "Sharing canceled. Your PDF is still ready." : "Could not share. Use Save PDF or Open PDF instead.";
+      });
+    };
+    win.addEventListener("pagehide", () => window.setTimeout(() => URL.revokeObjectURL(url), 60_000), { once: true });
+  } catch (error) {
+    if (status) status.textContent = "PDF could not be prepared. Close this preview and try again, or use Print.";
+    throw error;
+  }
+}
+
 function paragraph(text: ExportCell, bold = false, size?: number, options?: { keepNext?: boolean; color?: string }) {
   const runProps = bold || size || options?.color ? `<w:rPr>${bold ? "<w:b/>" : ""}${size ? `<w:sz w:val="${size}"/>` : ""}${options?.color ? `<w:color w:val="${options.color}"/>` : ""}</w:rPr>` : "";
   const paragraphProps = options?.keepNext ? "<w:pPr><w:keepNext/></w:pPr>" : "";
