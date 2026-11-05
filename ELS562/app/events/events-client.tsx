@@ -1,5 +1,6 @@
 "use client";
 
+import { compactScheduleNotes } from "@/lib/schedule-notes";
 import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting } from "@/lib/schedule-locations";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
 
@@ -449,7 +450,7 @@ const scheduleHeader = "Emanuel Labor Services Labor Call";
 const scheduleDateDisclaimer = "Dates and times are subject to change.";
 const scheduleLateHourlyDisclaimer = "If anyone is 15 minutes late or more, that shift will be paid hourly.";
 const onSiteReplacementSummary = "On-site Replacement: You must be onsite and at the listed meet-up location on time, ready to work. If you are not used, you will receive a flat $50 show-up payment. If you are used to replace a scheduled crew member, the $50 show-up payment is waived and you will be paid the rate for the shift and position you work.";
-const defaultScheduleTemplate = `${scheduleHeader}
+const defaultScheduleTemplate = compactScheduleNotes(`${scheduleHeader}
 
 Client: {client}
 
@@ -483,7 +484,7 @@ Emanuel Labor Services
 
 {crew_lead_line}
 
-Please confirm.`;
+Please confirm.`);
 const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name} at {venue}.\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 const defaultEventInvoiceMessage = `Hi {first_name}, please send your invoice to Storm@emanuel-labor-services.com
 
@@ -617,21 +618,7 @@ function ensureScheduleTemplateDisclaimers(value: string) {
   if (!/\{replacement_summary\}/i.test(text)) {
     text = text.replace(/(\{schedule\})/i, "$1\n\n{replacement_summary}");
   }
-  const insertBeforeAttire = (current: string, line: string) => {
-    if (/\n\nAttire:/i.test(current)) return current.replace(/\n\nAttire:/i, `\n\n${line}\n\nAttire:`);
-    return `${current}\n\n${line}`;
-  };
-  if (!/dates and times are subject to change/i.test(text)) {
-    text = insertBeforeAttire(text, scheduleDateDisclaimer);
-  }
-  if (!/15 minutes late/i.test(text)) {
-    if (/dates and times are subject to change\./i.test(text)) {
-      text = text.replace(/Dates and times are subject to change\./i, `${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}`);
-    } else {
-      text = insertBeforeAttire(text, scheduleLateHourlyDisclaimer);
-    }
-  }
-  return text;
+  return compactScheduleNotes(text);
 }
 
 function automationDraftFromRecord(showId: string, record: TextAutomationSettingsRecord | null | undefined, show?: Pick<ShowRecord, "rate_city" | "event_location" | "venue" | "name"> | null): AutomationDraft {
@@ -5339,7 +5326,7 @@ function EventsClientInner({
             ? `Crew Lead: ${leadAssignment.crew.name}\nPhone: ${formatPhone(leadAssignment.crew.phone) || "____________________"}`
             : "";
 
-        const text = [
+        const text = compactScheduleNotes([
           scheduleHeader,
           "",
           `Client: ${selectedShow.client || "Client TBD"}`,
@@ -5372,7 +5359,7 @@ function EventsClientInner({
           reportTo,
           "",
           "Please confirm.",
-        ].filter((line, index, lines) => line !== "" || lines[index - 1] !== "").join("\n");
+        ].filter((line, index, lines) => line !== "" || lines[index - 1] !== "").join("\n"));
 
         return { crewId, crewName, phone: item.crew?.phone || "", text };
       })

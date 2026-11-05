@@ -3,6 +3,7 @@ const root=path.resolve(__dirname,'..');
 const js=source=>ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 const exportsObject={};vm.runInNewContext(js(fs.readFileSync(path.join(root,'lib/schedule-locations.ts'),'utf8')),{exports:exportsObject});
 const locations=exportsObject;
+const notesExports={};vm.runInNewContext(js(fs.readFileSync(path.join(root,'lib/schedule-notes.ts'),'utf8')),{exports:notesExports});
 const source=fs.readFileSync(path.join(root,'app/api/text-automation/route.ts'),'utf8');
 const ast=ts.createSourceFile('route.ts',source,ts.ScriptTarget.Latest,true);
 const names=new Set(['nextScheduleByCrew','valuesForSpecificCall']);
@@ -13,7 +14,7 @@ const calls=[{id:'main',labor_day_id:'day1',role_name:'LED Stagehand',area:'Main
 const assignments=[{id:'a1',crew_id:'crew',sub_call_id:'main'},{id:'a2',crew_id:'crew',sub_call_id:'secondary'},{id:'a3',crew_id:'main-only',sub_call_id:'main'}];
 const crew=[{id:'crew',name:'Alex',phone:'5555555555'},{id:'main-only',name:'Sam',phone:'5555555556'}];
 const safeText=v=>String(v??'').trim();
-const dependencies={...locations,safeText,normalizeRole:safeText,parseEventMeta:()=>({meet_up_location:'Main lobby'}),dayTypeLabel:()=> 'Full day',assignmentDayType:()=> 'full_day',messageRateForCall:()=> '$50/hr',scheduleBoothNumber:()=>'',formatDate:v=>v,formatReminderDate:v=>v,assignmentTimeRange:(a,c)=>`${a.start_time||c.start_time}–${a.end_time||c.end_time}`,callMeetAtBooth:c=>c.notes==='booth',callBoothMeetupLocation:()=> 'Booth 20',canonicalLedRoleLabel:v=>v,firstName:v=>v,show,days,calls,assignments,crew};
+const dependencies={...locations,...notesExports,safeText,normalizeRole:safeText,parseEventMeta:()=>({meet_up_location:'Main lobby'}),dayTypeLabel:()=> 'Full day',assignmentDayType:()=> 'full_day',messageRateForCall:()=> '$50/hr',scheduleBoothNumber:()=>'',formatDate:v=>v,formatReminderDate:v=>v,assignmentTimeRange:(a,c)=>`${a.start_time||c.start_time}–${a.end_time||c.end_time}`,callMeetAtBooth:c=>c.notes==='booth',callBoothMeetupLocation:()=> 'Booth 20',canonicalLedRoleLabel:v=>v,firstName:v=>v,show,days,calls,assignments,crew};
 const context=vm.createContext(dependencies);vm.runInContext(js(parts),context);
 const run=()=>vm.runInContext('nextScheduleByCrew(show,days,calls,assignments,crew,[],{})',context);
 let passed=0;function check(name,fn){fn();passed++;console.log('PASS '+name)}
@@ -51,4 +52,7 @@ check('venue-only custom templates retain their location',()=>{const template='H
 calls[0].location=old;calls[1].location=old;
 const secondaryOnly=run().get('crew').values;
 check('one secondary site also appears only in header',()=>{assert.ok(!secondaryOnly.schedule.includes('WORK LOCATION'));assert.ok(!secondaryOnly.schedule.includes('MEET-UP'));assert.match(secondaryOnly.location,/Warehouse/);assert.match(secondaryOnly.meet_up_location,/Warehouse/);assert.ok(!secondaryOnly.meet_up_location.includes('Main lobby'));});
+check('schedule preview groups instructions into four consecutive bullets at bottom',()=>{const footer=singleClient.slice(singleClient.indexOf('★ IMPORTANT NOTES'));assert.equal((footer.match(/^• /gm)||[]).length,4);assert.ok(!footer.split('\n\nPlease confirm.')[0].includes('\n\n'));assert.ok(singleClient.indexOf('★ IMPORTANT NOTES')>singleClient.indexOf('Coordinator:'));assert.ok(footer.includes('Please bring a screwdriver, crescent wrench, and Allen keys.'));});
+check('refreshing saved schedules does not duplicate instructions or tools',()=>{const original='Schedule:\n{schedule}\n\nDates and times are subject to change.\n\nIf anyone is 15 minutes late or more, that shift will be paid hourly.\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: Storm\n\nPlease confirm.';const first=notesExports.compactScheduleNotes(original);assert.equal(notesExports.compactScheduleNotes(first),first);assert.equal(first.split('Dates and times are subject to change.').length-1,1);});
+check('custom attire survives compact footer formatting',()=>{const output=notesExports.compactScheduleNotes('Attire: Show blacks and steel-toed boots.\nPlease confirm.');assert.ok(output.includes('• Attire: Show blacks and steel-toed boots.'));assert.ok(!output.includes('Black polo'));});
 console.log(passed+' schedule location checks passed; no live messages sent.');

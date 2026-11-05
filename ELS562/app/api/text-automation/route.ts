@@ -1,3 +1,4 @@
+import { compactScheduleNotes } from "@/lib/schedule-notes";
 import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting } from "@/lib/schedule-locations";
 import { processCoordinatorPurchaseOrders } from "@/lib/coordinator-purchase-orders";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
@@ -874,7 +875,7 @@ const scheduleDateDisclaimer = "Dates and times are subject to change.";
 const updatedScheduleNotice = "*****UPDATED SCHEDULE PLEASE CONFIRM CHANGES*****";
 const scheduleLateHourlyDisclaimer = "If anyone is 15 minutes late or more, that shift will be paid hourly.";
 const onSiteReplacementSummary = "On-site Replacement: You must be onsite and at the listed meet-up location on time, ready to work. If you are not used, you will receive a flat $50 show-up payment. If you are used to replace a scheduled crew member, the $50 show-up payment is waived and you will be paid the rate for the shift and position you work.";
-const defaultScheduleTemplate = `Hi {first_name} – {show_name}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\n{booth_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`;
+const defaultScheduleTemplate = compactScheduleNotes(`Hi {first_name} – {show_name}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\n{booth_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`);
 const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name} at {venue}.\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 const defaultDayOfReminderTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nSee you soon. Please confirm.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 const defaultDailyAfterFirstDayTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
@@ -927,21 +928,7 @@ function ensureScheduleTemplateDisclaimers(value: string) {
   if (!/\{replacement_summary\}/i.test(text)) {
     text = text.replace(/(\{schedule\})/i, "$1\n\n{replacement_summary}");
   }
-  const insertBeforeAttire = (current: string, line: string) => {
-    if (/\n\nAttire:/i.test(current)) return current.replace(/\n\nAttire:/i, `\n\n${line}\n\nAttire:`);
-    return `${current}\n\n${line}`;
-  };
-  if (!/dates and times are subject to change/i.test(text)) {
-    text = insertBeforeAttire(text, scheduleDateDisclaimer);
-  }
-  if (!/15 minutes late/i.test(text)) {
-    if (/dates and times are subject to change\./i.test(text)) {
-      text = text.replace(/Dates and times are subject to change\./i, `${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}`);
-    } else {
-      text = insertBeforeAttire(text, scheduleLateHourlyDisclaimer);
-    }
-  }
-  return text;
+  return compactScheduleNotes(text);
 }
 
 function normalizeSettings(bodySettings: Partial<AutomationSettings>, showId: string): AutomationSettings {
