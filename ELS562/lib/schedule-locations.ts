@@ -27,7 +27,7 @@ export function scheduleLocationSummary(locations: string[]) {
 export function workMeetup(show: LocationShow, call: LocationCall, defaultMeetup: string, boothMeetup = "") {
   if (boothMeetup) return boothMeetup;
   // The event's usual meeting point may belong to a different venue.
-  if (clean(call.location) && workLocation(show, call).toLowerCase() !== workLocation(show, {}).toLowerCase()) return `At ${workLocation(show, call)} — confirm the exact meeting point with your coordinator`;
+  if (clean(call.location) && workLocation(show, call).toLowerCase() !== workLocation(show, {}).toLowerCase()) return "Confirm the meeting point at this work location with your coordinator";
   return defaultMeetup;
 }
 
@@ -35,4 +35,11 @@ export function workMeetup(show: LocationShow, call: LocationCall, defaultMeetup
 export function normalizeScheduleLocationGreeting(template: string) {
   if (!/\{location\}/i.test(template)) return template;
   return template.replace(/(\{show_name\})[ \t]*@[ \t]*\{venue\}/gi, "$1");
+}
+
+export function normalizeReminderLocationGreeting(template: string) {
+  if (!/\{next_call_sentence\}|\{location\}/i.test(template)) return template;
+  return template.replace(/(\{show_name\})[ \t]+at[ \t]+\{venue\}/gi, "$1")
+    .replace(/(\{next_call_sentence\})\s+(\{meet_up_section\})/gi, "$1\n$2")
+    .replace(/(\{meet_up_section\})\s+(\{booth_line\})/gi, "$1\n$2");
 }

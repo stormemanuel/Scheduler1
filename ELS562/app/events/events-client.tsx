@@ -2,7 +2,7 @@
 
 import { cleanAvailabilityMessage } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
-import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting } from "@/lib/schedule-locations";
+import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting, normalizeReminderLocationGreeting } from "@/lib/schedule-locations";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
 
 import { Component, Fragment, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
@@ -486,7 +486,7 @@ Emanuel Labor Services
 {crew_lead_line}
 
 Please confirm.`);
-const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name} at {venue}.\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
+const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name}.\n\n{next_call_sentence}\n{meet_up_section}\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 const defaultEventInvoiceMessage = `Hi {first_name}, please send your invoice to Storm@emanuel-labor-services.com
 
 Bill to:
@@ -580,7 +580,7 @@ function normalizeReminderTemplateForDisplay(value: string | null | undefined) {
       && (/\{booth_line\}/i.test(text) || /\bYour next call\b/i.test(text)))
     || (/Your next call\s*:\s*\{next_call\}/i.test(text)
       && /Meet up here\s*:\s*\{meet_up_location\}/i.test(text))) return defaultReminderTemplate;
-  return text;
+  return normalizeReminderLocationGreeting(text);
 }
 
 function normalizeScheduleTemplateForDisplay(value: string | null | undefined) {

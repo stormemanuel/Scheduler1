@@ -1,6 +1,6 @@
 import { cleanAvailabilityMessage } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
-import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting } from "@/lib/schedule-locations";
+import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting, normalizeReminderLocationGreeting } from "@/lib/schedule-locations";
 import { processCoordinatorPurchaseOrders } from "@/lib/coordinator-purchase-orders";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
 import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
@@ -756,7 +756,7 @@ function applyTemplate(template: string, values: Record<string, string>) {
 
 function cleanReminderBody(value: string) {
   return safeText(value)
-    .replace(/Meet up here:\s*([^\n]+)/gi, "Meet up here:\n$1")
+    .replace(/Meet up here:\s*([^\n]+)/gi, "Meet-up: $1")
     // Older reminders used different work-area labels; retain the actual area name.
     .replace(/^(?:Your assigned work area|Area you're assigned to|Your assigned area):[ \t]*\n[ \t]*([^\n]+)$/gim, "Your assigned area: $1")
     .replace(/^(?:Your assigned work area|Area you're assigned to):[ \t]*([^\n]+)$/gim, "Your assigned area: $1")
@@ -835,7 +835,7 @@ function normalizeAvailabilityTemplate(value: unknown) {
 }
 
 function normalizeReminderTemplate(value: unknown) {
-  const text = safeText(value);
+  const text = normalizeReminderLocationGreeting(safeText(value));
   if (!text) return defaultReminderTemplate;
   // Previously saved event templates have several punctuation and whitespace
   // variants. Exact string comparisons left them active indefinitely, causing
@@ -850,9 +850,9 @@ function normalizeReminderTemplate(value: unknown) {
   // Leave genuinely custom templates untouched, but put the work-area section
   // after the meetup section for templates already using the new placeholders.
   if (/\{meet_up_section\}/i.test(text) && /\{booth_line\}/i.test(text)) {
-    return text.replace(/\{booth_line\}/gi, "").replace(/\{meet_up_section\}/i, "{meet_up_section}\n\n{booth_line}");
+    return normalizeReminderLocationGreeting(text.replace(/\{booth_line\}/gi, "").replace(/\{meet_up_section\}/i, "{meet_up_section}\n{booth_line}"));
   }
-  return text;
+  return normalizeReminderLocationGreeting(text);
 }
 
 function normalizeScheduleTemplate(value: unknown) {
@@ -877,9 +877,9 @@ const updatedScheduleNotice = "*****UPDATED SCHEDULE PLEASE CONFIRM CHANGES*****
 const scheduleLateHourlyDisclaimer = "If anyone is 15 minutes late or more, that shift will be paid hourly.";
 const onSiteReplacementSummary = "On-site Replacement: You must be onsite and at the listed meet-up location on time, ready to work. If you are not used, you will receive a flat $50 show-up payment. If you are used to replace a scheduled crew member, the $50 show-up payment is waived and you will be paid the rate for the shift and position you work.";
 const defaultScheduleTemplate = compactScheduleNotes(`Hi {first_name} – {show_name}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\n{booth_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`);
-const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name} at {venue}.\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
-const defaultDayOfReminderTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nSee you soon. Please confirm.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
-const defaultDailyAfterFirstDayTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
+const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name}.\n\n{next_call_sentence}\n{meet_up_section}\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
+const defaultDayOfReminderTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n{meet_up_section}\n{booth_line}\n\nSee you soon. Please confirm.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
+const defaultDailyAfterFirstDayTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n{meet_up_section}\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 
 function isUpdatedScheduleMessage(body: string, reminderKey = "") {
   // Notices sit below the header. Accept the former wording for queued texts,
@@ -1273,14 +1273,15 @@ function valuesForSpecificCall(
   const boothMeetup = callMeetAtBooth(row.call) ? callBoothMeetupLocation(row.call) : "";
   const meetUpLocation = workMeetup(show, row.call, parseEventMeta(show.notes).meet_up_location || "Confirm with coordinator", boothMeetup);
   const booth = scheduleBoothNumber(row.call);
-  const boothLabel = booth ? `Booth ${safeText(booth).replace(/^booth\s+/i, "")}` : "";
-  const areaLabel = boothLabel || safeText(row.call.area);
+  const boothLabel = booth && !/^(?:booth\s+)?tbd$/i.test(booth.trim()) ? `Booth ${safeText(booth).replace(/^booth\s+/i, "")}` : "";
+  const rawArea = boothLabel || safeText(row.call.area);
+  const areaLabel = /^(?:TBD|Booth TBD|Area TBD|Imported Call)$/i.test(rawArea) ? "" : rawArea;
   return {
     ...baseValues,
     next_call: `${formatDate(row.day.labor_date)} ${assignmentTimeRange(row.assignment, row.call)}`,
-    next_call_sentence: `Your call is ${formatReminderDate(row.day.labor_date)}, from ${assignmentTimeRange(row.assignment, row.call)}.\n${workLocationLine(show, row.call)}`,
-    booth_line: areaLabel ? `Your assigned area: ${areaLabel}` : "",
-    meet_up_section: meetUpLocation ? `Meet up here:\n${meetUpLocation}` : "",
+    next_call_sentence: `Call: ${formatReminderDate(row.day.labor_date)} · ${assignmentTimeRange(row.assignment, row.call)}\nLocation: ${workLocation(show, row.call)}`,
+    booth_line: areaLabel ? `Area: ${areaLabel}` : "",
+    meet_up_section: meetUpLocation ? `Meet-up: ${meetUpLocation}` : "",
     meet_up_location: meetUpLocation,
     meet_up_sentence: meetUpLocation ? ` Meet-up Location: ${meetUpLocation}.` : "",
     venue: workLocation(show, row.call),
