@@ -612,13 +612,14 @@ function formatTimeRange(call: SubCallRow) {
   return `${formatTime(call.start_time)}–${formatTime(call.end_time)}`;
 }
 
-function formatAvailabilityScheduleLines(calls: Array<{ labor_date: string; start_time?: string | null; end_time?: string | null; open_positions?: number }>) {
+function formatAvailabilityScheduleLines(calls: Array<{ labor_date: string; start_time?: string | null; end_time?: string | null; open_positions?: number; rate?: string }>) {
+  const mixedRates = new Set(calls.map(call => call.rate).filter(Boolean)).size > 1;
   return [...calls]
     .filter((call) => safeText(call.labor_date) || safeText(call.start_time) || safeText(call.end_time))
     .sort((a, b) => safeText(a.labor_date).localeCompare(safeText(b.labor_date)) || safeText(a.start_time).localeCompare(safeText(b.start_time)) || safeText(a.end_time).localeCompare(safeText(b.end_time)))
     .map((call) => {
       const timeRange = safeText(call.start_time) || safeText(call.end_time) ? `${formatTime(call.start_time)}–${formatTime(call.end_time)}` : "";
-      return [call.labor_date ? formatDate(call.labor_date) : "", timeRange, call.open_positions === undefined ? "" : `${call.open_positions} position${call.open_positions === 1 ? "" : "s"} open`].filter(Boolean).join(" · ");
+      return [call.labor_date ? formatDate(call.labor_date) : "", timeRange, mixedRates ? safeText(call.rate) : "", call.open_positions === undefined ? "" : `${call.open_positions} position${call.open_positions === 1 ? "" : "s"} open`].filter(Boolean).join(" · ");
     })
     .join("\n");
 }
@@ -779,6 +780,7 @@ function enforceAvailabilityRate(body: string, expectedRate: string) {
   // Legacy saved templates can contain a literal old rate instead of {rate}.
   // The final queued body must always match this request's selected rate.
   text = text.replace(/^\s*Rate\s*:\s*.*$/gim, `Rate: ${rate}`);
+  if (rate === "Varies by shift (see below)") return cleanAvailabilityMessage(text);
   return text.replace(/\$\s*\d+(?:\.\d{1,2})?\s*(?:\/\s*(?:hr|hour)|per\s+hour)\b/gi, rate);
 }
 
@@ -2079,7 +2081,7 @@ async function validateAvailabilityBookings(
   showId: string, crewIds: string[], callIds: string[],
 ) {
   if (!callIds.length) throw new Error("Select specific sub-calls before queueing availability.");
-  const calls = await readAvailabilityRows<SubCallRow>(admin, "sub_calls", "id, labor_day_id, role_name, area, location, start_time, end_time, crew_needed", "id", callIds);
+  const calls = await readAvailabilityRows<SubCallRow>(admin, "sub_calls", "id, labor_day_id, role_name, master_rate_id, area, location, start_time, end_time, crew_needed", "id", callIds);
   if (calls.length !== callIds.length) throw new Error("Requested sub-calls changed or no longer exist. Refresh and try again.");
   const days = await readAvailabilityRows<LaborDayRow>(admin, "labor_days", "id, show_id, labor_date", "id", [...new Set(calls.map((call) => call.labor_day_id))]);
   const dayById = new Map(days.map((day) => [day.id, day]));
@@ -2142,12 +2144,18 @@ async function queueAvailabilityCandidates(
   // Never trust client-supplied dates/times for either conflict checks or messages.
   const callIds = cleanQueueIds(body.sub_call_ids, 250);
   const verifiedCalls = await validateAvailabilityBookings(admin, showId, crewIds, callIds);
-  const availabilityCalls: AvailabilityCallRequest[] = verifiedCalls.map((call) => ({
+  const ratesResult = await admin.from("master_rates").select("id, city_name, role_name, full_day");
+  if (ratesResult.error) throw new Error("Unable to verify sub-call rates. No messages queued.");
+  const rates = (ratesResult.data || []) as MasterRateRow[];
+  const callRatesFromSchedule = verifiedCalls.map(call => messageRateForCall(call, {} as CrewRow, show, rates, {}));
+  const mixedScheduleRates = new Set(callRatesFromSchedule).size > 1;
+  if (mixedScheduleRates && callRatesFromSchedule.some(rate => rate === "Rate TBD")) throw new Error("A selected sub-call is missing its rate. Review rates before queueing.");
+  const availabilityCalls: AvailabilityCallRequest[] = verifiedCalls.map((call, index) => ({
     labor_date: call.labor_date,
     open_positions: call.open_positions,
     start_time: safeText(call.start_time), end_time: safeText(call.end_time),
     role_name: safeText(call.role_name), area: safeText(call.area),
-    location: safeText(call.location), rate: safeText(body.availability_rate),
+    location: safeText(call.location), rate: mixedScheduleRates ? callRatesFromSchedule[index] : safeText(body.availability_rate) || callRatesFromSchedule[index],
   }));
   const uniqueValues = (values: string[]) => [...new Set(values.map(safeText).filter(Boolean))];
   const callRoles = uniqueValues(availabilityCalls.map((call) => call.role_name || "Crew"));
@@ -2160,7 +2168,7 @@ async function queueAvailabilityCandidates(
     ? formatAvailabilityScheduleLines(availabilityCalls)
     : safeText(body.availability_schedule) || `${formatDate(show.show_start)} through ${formatDate(show.show_end)}`;
   const availabilityArea = safeText(body.availability_area) || callAreas.join(" / ");
-  const availabilityRate = safeText(body.availability_rate) || callRates.join(" / ") || "TBD";
+  const availabilityRate = mixedScheduleRates ? "Varies by shift (see below)" : safeText(body.availability_rate) || callRates.join(" / ") || "TBD";
   const venueOrLocation = safeText(show.venue) || safeText(show.event_location);
   const availabilityStart = callDates[0] || show.show_start;
   const availabilityEnd = callDates[callDates.length - 1] || show.show_end;

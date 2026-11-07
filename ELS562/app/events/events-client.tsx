@@ -2090,10 +2090,11 @@ function formatTimeRange(call: SubCallRecord) {
   return `${formatDisplayTime(call.start_time)}${call.end_time ? `–${formatDisplayTime(call.end_time)}` : ""}`;
 }
 
-function formatAvailabilityScheduleLines(items: Array<{ day: LaborDayRecord; call: SubCallRecord; openPositions?: number }>) {
+function formatAvailabilityScheduleLines(items: Array<{ day: LaborDayRecord; call: SubCallRecord; openPositions?: number; rate?: string }>) {
+  const mixedRates = new Set(items.map(item => item.rate).filter(Boolean)).size > 1;
   return [...items]
     .sort((a, b) => a.day.labor_date.localeCompare(b.day.labor_date) || a.call.start_time.localeCompare(b.call.start_time) || a.call.end_time.localeCompare(b.call.end_time))
-    .map(({ day, call, openPositions }) => `${formatMessageDate(day.labor_date)} · ${formatTimeRange(call)}${openPositions === undefined ? "" : ` · ${openPositions} position${openPositions === 1 ? "" : "s"} open`}`)
+    .map(({ day, call, openPositions, rate }) => `${formatMessageDate(day.labor_date)} · ${formatTimeRange(call)}${mixedRates && rate ? ` · ${rate}` : ""}${openPositions === undefined ? "" : ` · ${openPositions} position${openPositions === 1 ? "" : "s"} open`}`)
     .join("\n");
 }
 
@@ -3207,7 +3208,7 @@ function applyAvailabilityTemplatePreview(template: string, values: Record<strin
   const rate = safeText(values.rate);
   if (rate && rate !== "Choose rate") {
     text = text.replace(/^\s*Rate\s*:\s*.*$/gim, `Rate: ${rate}`);
-    text = text.replace(/\$\s*\d+(?:\.\d{1,2})?\s*(?:\/\s*(?:hr|hour)|per\s+hour)\b/gi, rate);
+    if (rate !== "Varies by shift (see below)") text = text.replace(/\$\s*\d+(?:\.\d{1,2})?\s*(?:\/\s*(?:hr|hour)|per\s+hour)\b/gi, rate);
   }
   return text;
 }
@@ -4585,7 +4586,7 @@ function EventsClientInner({
     : availabilityRatePreset || (!availabilityRateHasConflict ? availabilitySuggestedRate : "");
 
   const availabilityRequestDetails = useMemo(() => {
-    const calls = selectedAvailabilitySubCalls;
+    const calls = selectedAvailabilitySubCalls.map(item => ({ ...item, rate: normalizeAvailabilityRateInput(availabilityRateLabelForCall(item.call, selectedShow?.rate_city || activeRateCity, liveMasterRates)) }));
     const roles = [...new Set(calls.map((item) => availabilityRoleName(item.call.role_name) || "Crew").filter(Boolean))];
     const areas = [...new Set(calls.map((item) => boothLabel(item.call.area)).filter(Boolean))];
     const schedule = calls.length
@@ -4603,10 +4604,10 @@ function EventsClientInner({
       show_name: safeText(selectedShow?.name),
       venue: safeText(selectedShow?.venue),
       location: eventLocationLabel(selectedShow),
-      rate: availabilityMessageRate,
+      rate: availabilityRateHasConflict ? "Varies by shift (see below)" : availabilityMessageRate,
       schedule,
     };
-  }, [selectedAvailabilitySubCalls, selectedShow, availabilityCandidateRole, availabilityMessageRate]);
+  }, [selectedAvailabilitySubCalls, selectedShow, availabilityCandidateRole, availabilityMessageRate, availabilityRateHasConflict, activeRateCity, liveMasterRates]);
 
   const availabilityRoleOptions = useMemo(() => {
     const roleSummary = new Map<string, { role: string; open: number }>();
@@ -8157,7 +8158,7 @@ function EventsClientInner({
         role_name: call.role_name,
         area: boothLabel(call.area),
         location: call.location || eventLocationLabel(selectedShow) || selectedShow.venue,
-        rate: availabilityRequestDetails.rate,
+        rate: availabilityRateHasConflict ? normalizeAvailabilityRateInput(availabilityRateLabelForCall(call, selectedShow.rate_city || activeRateCity, liveMasterRates)) : availabilityRequestDetails.rate,
       })),
       availability_area: availabilityRequestDetails.area,
       availability_rate: availabilityRequestDetails.rate,
@@ -12462,7 +12463,7 @@ function EventsClientInner({
                   <div className="small muted">
                     This is only the availability outreach rate. It does not change client billing, payroll, or sub-call rates.
                     {availabilitySuggestedRate ? ` Suggested by selected sub-calls: ${availabilitySuggestedRate}.` : ""}
-                    {availabilityRateHasConflict ? ` Selected sub-calls have mixed suggested rates: ${selectedAvailabilitySuggestedRates.join(" / ")}.` : ""}
+                    {availabilityRateHasConflict ? ` Different rates (${selectedAvailabilitySuggestedRates.join(" / ")}) will appear beside their shifts automatically.` : ""}
                   </div>
                 </div>
                 <span className={availabilityRequestDetails.rate ? "badge success" : "badge danger"}>{availabilityRequestDetails.rate || "Choose rate"}</span>
@@ -12471,6 +12472,7 @@ function EventsClientInner({
                 {availabilityRateOptions.map((rate) => (
                   <button
                     key={rate}
+                    disabled={availabilityRateHasConflict}
                     type="button"
                     className={availabilityRatePreset === rate ? "primary" : "ghost"}
                     onClick={() => {
@@ -12484,6 +12486,7 @@ function EventsClientInner({
                 <button
                   type="button"
                   className={availabilityRatePreset === "custom" ? "primary" : "ghost"}
+                  disabled={availabilityRateHasConflict}
                   onClick={() => setAvailabilityRatePreset("custom")}
                 >
                   Custom
@@ -12492,6 +12495,7 @@ function EventsClientInner({
               <label className="field" style={{ marginTop: 10 }}>
                 <span>Custom rate</span>
                 <input
+                  disabled={availabilityRateHasConflict}
                   value={availabilityCustomRate}
                   onChange={(event) => {
                     setAvailabilityCustomRate(event.target.value);
