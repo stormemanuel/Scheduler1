@@ -2090,10 +2090,10 @@ function formatTimeRange(call: SubCallRecord) {
   return `${formatDisplayTime(call.start_time)}${call.end_time ? `–${formatDisplayTime(call.end_time)}` : ""}`;
 }
 
-function formatAvailabilityScheduleLines(items: Array<{ day: LaborDayRecord; call: SubCallRecord }>) {
+function formatAvailabilityScheduleLines(items: Array<{ day: LaborDayRecord; call: SubCallRecord; openPositions?: number }>) {
   return [...items]
     .sort((a, b) => a.day.labor_date.localeCompare(b.day.labor_date) || a.call.start_time.localeCompare(b.call.start_time) || a.call.end_time.localeCompare(b.call.end_time))
-    .map(({ day, call }) => `${formatMessageDate(day.labor_date)} · ${formatTimeRange(call)}`)
+    .map(({ day, call, openPositions }) => `${formatMessageDate(day.labor_date)} · ${formatTimeRange(call)}${openPositions === undefined ? "" : ` · ${openPositions} position${openPositions === 1 ? "" : "s"} open`}`)
     .join("\n");
 }
 
@@ -4561,10 +4561,10 @@ function EventsClientInner({
 
   const availabilitySubCallOptions = useMemo(() => {
     return availabilityEventCalls
-      .map((call) => ({ call, day: laborDayById.get(call.labor_day_id) || null }))
-      .filter((item): item is { call: SubCallRecord; day: LaborDayRecord } => Boolean(item.day))
+      .map((call) => ({ call, day: laborDayById.get(call.labor_day_id) || null, openPositions: Math.max(0, Number(call.crew_needed || 0) - (assignmentCountByCallId.get(call.id) || 0)) }))
+      .filter((item): item is { call: SubCallRecord; day: LaborDayRecord; openPositions: number } => Boolean(item.day) && item.openPositions > 0)
       .sort((a, b) => a.day.labor_date.localeCompare(b.day.labor_date) || formatTimeRange(a.call).localeCompare(formatTimeRange(b.call)) || boothLabel(a.call.area).localeCompare(boothLabel(b.call.area)));
-  }, [availabilityEventCalls, laborDayById]);
+  }, [availabilityEventCalls, laborDayById, assignmentCountByCallId]);
 
   const selectedAvailabilitySubCalls = useMemo(() => {
     const selectedIds = new Set(selectedAvailabilitySubCallIds);
@@ -12392,17 +12392,17 @@ function EventsClientInner({
             <div className="card compact" style={{ marginTop: 12, boxShadow: "none", background: "#fbfcfd" }}>
               <div className="row" style={{ alignItems: "flex-start" }}>
                 <div>
-                  <strong>Ask availability for specific sub-calls</strong>
-                  <div className="small muted">Select the exact position/date/hour rows you are trying to fill. The message uses those calls instead of the broader full-show date range.</div>
+                  <strong id="availability-open-calls">Ask availability for specific sub-calls</strong>
+                  <div className="small muted">Only sub-calls with open positions are shown. Select the exact dates and shifts you still need to fill.</div>
                 </div>
                 <div className="toolbar">
-                  <button type="button" className="ghost" onClick={() => setSelectedAvailabilitySubCallIds(availabilitySubCallOptions.map((item) => item.call.id))} disabled={!availabilitySubCallOptions.length}>Select all sub-calls</button>
+                  <button type="button" className="ghost" onClick={() => setSelectedAvailabilitySubCallIds(availabilitySubCallOptions.map((item) => item.call.id))} disabled={!availabilitySubCallOptions.length}>Select all open sub-calls</button>
                   <button type="button" className="ghost" onClick={() => setSelectedAvailabilitySubCallIds([])} disabled={!selectedAvailabilitySubCallIds.length}>Clear sub-calls</button>
                 </div>
               </div>
               {availabilitySubCallOptions.length ? (
                 <div className="grid grid-2" style={{ marginTop: 10 }}>
-                  {availabilitySubCallOptions.map(({ day, call }) => {
+                  {availabilitySubCallOptions.map(({ day, call, openPositions }) => {
                     const selected = selectedAvailabilitySubCallIds.includes(call.id);
                     const rate = availabilityRateLabelForCall(call, selectedShow.rate_city || activeRateCity, liveMasterRates);
                     return (
@@ -12418,6 +12418,7 @@ function EventsClientInner({
                         />
                         <span>
                           <strong>{formatMessageDate(day.labor_date)} · {formatTimeRange(call)}</strong>
+                          <span className="badge" style={{ marginLeft: 8 }}>{openPositions} position{openPositions === 1 ? "" : "s"} still needed</span>
                           <span className="small muted" style={{ display: "block" }}>{availabilityRoleName(call.role_name) || "Crew"} · {boothLabel(call.area)} · {rate}</span>
                         </span>
                       </label>
@@ -12425,7 +12426,7 @@ function EventsClientInner({
                   })}
                 </div>
               ) : (
-                <p className="small muted" style={{ marginBottom: 0 }}>No sub-calls are entered for this show yet.</p>
+                <p className="small muted" style={{ marginBottom: 0 }}>No open sub-calls. All existing sub-calls are fully staffed, or none have been added yet.</p>
               )}
               <div className="small" style={{ marginTop: 10, whiteSpace: "pre-line" }}>
                 <strong>Message will use:</strong> {[availabilityRequestDetails.position, availabilityRequestDetails.area, availabilityRequestDetails.venue_or_location, availabilityRequestDetails.rate || "Choose rate"].filter(Boolean).join(" · ")}
@@ -13329,7 +13330,7 @@ function EventsClientInner({
 
           <div className="toolbar" style={{ marginTop: 14 }}>
             <button type="button" className="primary" onClick={saveAutomationSettings} disabled={saving || !selectedShow}>Save text settings</button>
-            <button type="button" className="ghost" onClick={() => queueTextMessages("availability")} disabled={saving || !selectedShow || !automationDraft.send_availability}>Queue availability to assigned crew</button>
+            <button type="button" className="ghost" onClick={() => { setAvailabilityPanelOpen(true); window.setTimeout(() => document.getElementById("availability-open-calls")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }} disabled={saving || !selectedShow}>Choose open sub-calls for availability</button>
             <button type="button" className="ghost" onClick={() => queueTextMessages("schedule_reminders")} disabled={saving || !selectedShow || !automationDraft.send_schedule}>Queue schedule/reminders</button>
             {automationDraft.sending_method === "provider" ? <button type="button" className="ghost" onClick={sendDueTextsNow} disabled={saving}>Send due with provider</button> : null}
           </div>

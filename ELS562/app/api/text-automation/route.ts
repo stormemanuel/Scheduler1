@@ -63,6 +63,7 @@ type CrewRow = { id: string; name: string | null; phone: string | null; email: s
 type MasterRateRow = { id: string; city_name: string | null; role_name: string | null; full_day: string | number | null };
 type ClientContactRow = { id: string; name: string | null; phone?: string | null; cell_phone?: string | null; email?: string | null };
 type AvailabilityCallRequest = {
+  open_positions?: number;
   labor_date: string;
   start_time: string;
   end_time: string;
@@ -611,13 +612,13 @@ function formatTimeRange(call: SubCallRow) {
   return `${formatTime(call.start_time)}–${formatTime(call.end_time)}`;
 }
 
-function formatAvailabilityScheduleLines(calls: Array<{ labor_date: string; start_time?: string | null; end_time?: string | null }>) {
+function formatAvailabilityScheduleLines(calls: Array<{ labor_date: string; start_time?: string | null; end_time?: string | null; open_positions?: number }>) {
   return [...calls]
     .filter((call) => safeText(call.labor_date) || safeText(call.start_time) || safeText(call.end_time))
     .sort((a, b) => safeText(a.labor_date).localeCompare(safeText(b.labor_date)) || safeText(a.start_time).localeCompare(safeText(b.start_time)) || safeText(a.end_time).localeCompare(safeText(b.end_time)))
     .map((call) => {
       const timeRange = safeText(call.start_time) || safeText(call.end_time) ? `${formatTime(call.start_time)}–${formatTime(call.end_time)}` : "";
-      return [call.labor_date ? formatDate(call.labor_date) : "", timeRange].filter(Boolean).join(" · ");
+      return [call.labor_date ? formatDate(call.labor_date) : "", timeRange, call.open_positions === undefined ? "" : `${call.open_positions} position${call.open_positions === 1 ? "" : "s"} open`].filter(Boolean).join(" · ");
     })
     .join("\n");
 }
@@ -2078,7 +2079,7 @@ async function validateAvailabilityBookings(
   showId: string, crewIds: string[], callIds: string[],
 ) {
   if (!callIds.length) throw new Error("Select specific sub-calls before queueing availability.");
-  const calls = await readAvailabilityRows<SubCallRow>(admin, "sub_calls", "id, labor_day_id, role_name, area, location, start_time, end_time", "id", callIds);
+  const calls = await readAvailabilityRows<SubCallRow>(admin, "sub_calls", "id, labor_day_id, role_name, area, location, start_time, end_time, crew_needed", "id", callIds);
   if (calls.length !== callIds.length) throw new Error("Requested sub-calls changed or no longer exist. Refresh and try again.");
   const days = await readAvailabilityRows<LaborDayRow>(admin, "labor_days", "id, show_id, labor_date", "id", [...new Set(calls.map((call) => call.labor_day_id))]);
   const dayById = new Map(days.map((day) => [day.id, day]));
@@ -2089,6 +2090,15 @@ async function validateAvailabilityBookings(
     if (!interval) throw new Error("Requested calls have incomplete dates or times. No messages queued.");
     return interval;
   });
+  const staffing = await readAvailabilityRows<AssignmentRow>(admin, "assignments", "id, sub_call_id, crew_id, status", "sub_call_id", callIds);
+  const filled = new Map<string, number>();
+  for (const assignment of staffing) {
+    if (availabilityAssignmentActive(assignment.status)) filled.set(assignment.sub_call_id, (filled.get(assignment.sub_call_id) || 0) + 1);
+  }
+  const openByCall = new Map(calls.map(call => [call.id, Math.max(0, Number(call.crew_needed || 0) - (filled.get(call.id) || 0))]));
+  if (calls.some(call => !Number.isFinite(openByCall.get(call.id)) || !(openByCall.get(call.id)! > 0))) {
+    throw new Error("One or more selected sub-calls are now fully staffed or have no open positions. Refresh and select only open sub-calls. No messages queued.");
+  }
   const assignments = (await readAvailabilityRows<AssignmentRow>(admin, "assignments", "id, sub_call_id, crew_id, status, start_time, end_time", "crew_id", crewIds))
     .filter((assignment) => availabilityAssignmentActive(assignment.status));
   const bookedCalls = await readAvailabilityRows<SubCallRow>(admin, "sub_calls", "id, labor_day_id, start_time, end_time", "id", [...new Set(assignments.map((assignment) => assignment.sub_call_id))]);
@@ -2104,7 +2114,7 @@ async function validateAvailabilityBookings(
       throw new Error("Selected crew have a booking conflict with the requested calls. No messages queued; refresh and select different crew or calls.");
     }
   }
-  return calls.map((call) => ({ ...call, labor_date: dayById.get(call.labor_day_id)!.labor_date }));
+  return calls.map((call) => ({ ...call, labor_date: dayById.get(call.labor_day_id)!.labor_date, open_positions: openByCall.get(call.id)! }));
 }
 
 async function queueAvailabilityCandidates(
@@ -2134,6 +2144,7 @@ async function queueAvailabilityCandidates(
   const verifiedCalls = await validateAvailabilityBookings(admin, showId, crewIds, callIds);
   const availabilityCalls: AvailabilityCallRequest[] = verifiedCalls.map((call) => ({
     labor_date: call.labor_date,
+    open_positions: call.open_positions,
     start_time: safeText(call.start_time), end_time: safeText(call.end_time),
     role_name: safeText(call.role_name), area: safeText(call.area),
     location: safeText(call.location), rate: safeText(body.availability_rate),
@@ -3589,6 +3600,7 @@ export async function POST(request: Request) {
     if (action !== "queue_messages" && !isManualReminderAction && !isCustomMessageAction) return NextResponse.json({ message: "Unsupported action." }, { status: 400 });
     if (!showId) return NextResponse.json({ message: "show_id is required." }, { status: 400 });
     const mode = isManualReminderAction || isCustomMessageAction ? "schedule_reminders" : body.mode === "availability" ? "availability" : "schedule_reminders";
+    if (mode === "availability") return NextResponse.json({ message: "Use Ask availability for specific sub-calls to select open positions and available crew. No messages queued." }, { status: 400 });
     const manualReminderKey = safeText(body.reminder_key) || "day_of";
     const manualLaborDayId = safeText(body.labor_day_id);
     const scheduleManualDayAtNormalTime = action === "queue_manual_day_reminder" && Boolean(body.schedule_for_due_time);

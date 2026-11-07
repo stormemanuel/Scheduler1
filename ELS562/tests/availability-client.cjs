@@ -3,9 +3,10 @@ const ts=require('typescript');
 const root=require('path').resolve(__dirname,'..')+'/';
 const source=fs.readFileSync(root+'app/events/events-client.tsx','utf8');
 const ast=ts.createSourceFile('events.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
-const functions={};let memo;
+const functions={};let memo,openCallsMemo;
 function walk(n){
  if(ts.isFunctionDeclaration(n)&&n.name)functions[n.name.text]=n.getText(ast);
+ if(ts.isVariableDeclaration(n)&&n.name.getText(ast)==='availabilitySubCallOptions')openCallsMemo=n.initializer.arguments[0].getText(ast);
  if(ts.isVariableDeclaration(n)&&n.name.getText(ast)==='availabilityBookingStatus')memo=n.initializer.arguments[0].getText(ast);
  ts.forEachChild(n,walk);
 }walk(ast);
@@ -35,6 +36,12 @@ check('SAFETY: missing loaded booking must not be advertised conflict-free',()=>
 for (const [date, start, end] of [['2026-02-30','10:00','12:00'],['2026-10-21','25:00','12:00'],['2026-10-21','10:99','12:00'],['2026-10-21','10:00oops','12:00'],['','10:00','12:00']]) {
  check('invalid schedule rejected: '+[date,start,end].join(' '),()=>assert.equal(base.availabilityInterval(date,start,end),null));
 }
+const openContext={availabilityEventCalls:[{id:'full',labor_day_id:'day',crew_needed:2},{id:'partial',labor_day_id:'day',crew_needed:4},{id:'empty',labor_day_id:'day',crew_needed:3}],laborDayById:new Map([['day',{id:'day',labor_date:'2026-12-10'}]]),assignmentCountByCallId:new Map([['full',2],['partial',1]]),formatTimeRange:()=> '08:00–18:00',boothLabel:()=> 'Area',formatMessageDate:v=>v};
+const getOpen=()=>vm.runInNewContext(js('('+openCallsMemo+')()'),openContext);
+check('only unfilled sub-calls appear with remaining position counts',()=>{const options=getOpen();assert.equal(options.length,2);assert.equal(options.find(item=>item.call.id==='partial').openPositions,3);assert.equal(options.find(item=>item.call.id==='empty').openPositions,3);});
+openContext.assignmentCountByCallId.set('partial',4);
+check('sub-call disappears after final slot fills',()=>assert.equal(getOpen().some(item=>item.call.id==='partial'),false));
+check('availability preview labels each shift with remaining positions',()=>{const ctx={...openContext,items:getOpen()};const text=vm.runInNewContext(js(functions.formatAvailabilityScheduleLines+'\nformatAvailabilityScheduleLines(items)'),ctx);assert.ok(text.includes('3 positions open'));});
 (async()=>{
  let payload;
  const context={...base,selectedAvailabilityCrewIds:['crew'],automationDraft:{availability_template:'Hello'},unknownAvailabilityPlaceholders:()=>[],availabilityRequestDetails:{rate:'$30',position:'Crew',area:'A',schedule:'Today'},availabilityRateHasConflict:false,availabilityCandidateRole:'Crew',availabilityCandidateCity:'All cities',selectedAvailabilitySubCalls:[{day:{labor_date:'2026-10-21'},call:{start_time:'10:00',end_time:'12:00'}}],availabilityBookingStatus:new Map([['crew',{conflicts:1}]]),request:async(path,method,body)=>{payload=body;return{queue:[]}},mergeQueuedTexts:()=>{},boothLabel:()=>'',eventLocationLabel:()=>'',setMsg:()=>{}};
