@@ -1,6 +1,6 @@
 "use client";
 
-import { cleanAvailabilityMessage } from "@/lib/availability-message";
+import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
 import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting, normalizeReminderLocationGreeting } from "@/lib/schedule-locations";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
@@ -2092,10 +2092,12 @@ function formatTimeRange(call: SubCallRecord) {
 
 function formatAvailabilityScheduleLines(items: Array<{ day: LaborDayRecord; call: SubCallRecord; openPositions?: number; rate?: string }>) {
   const mixedRates = new Set(items.map(item => item.rate).filter(Boolean)).size > 1;
-  return [...items]
+  return formatAvailabilityGroups([...items]
     .sort((a, b) => a.day.labor_date.localeCompare(b.day.labor_date) || a.call.start_time.localeCompare(b.call.start_time) || a.call.end_time.localeCompare(b.call.end_time))
-    .map(({ day, call, openPositions, rate }) => `${formatMessageDate(day.labor_date)} · ${formatTimeRange(call)}${mixedRates && rate ? ` · ${rate}` : ""}${openPositions === undefined ? "" : ` · ${openPositions} position${openPositions === 1 ? "" : "s"} open`}`)
-    .join("\n");
+    .map(({ day, call, rate }) => ({
+      position: call.role_name || "Crew", area: call.area || "",
+      line: `${formatMessageDate(day.labor_date)} · ${formatTimeRange(call)}${mixedRates && rate ? ` · ${rate}` : ""}`,
+    })));
 }
 
 function eventLocationLabel(show: ShowRecord | null | undefined) {
@@ -3210,7 +3212,7 @@ function applyAvailabilityTemplatePreview(template: string, values: Record<strin
     text = text.replace(/^\s*Rate\s*:\s*.*$/gim, `Rate: ${rate}`);
     if (rate !== "Varies by shift (see below)") text = text.replace(/\$\s*\d+(?:\.\d{1,2})?\s*(?:\/\s*(?:hr|hour)|per\s+hour)\b/gi, rate);
   }
-  return text;
+  return cleanAvailabilityMessage(text);
 }
 
 
@@ -4596,8 +4598,8 @@ function EventsClientInner({
     const showReference = safeText(selectedShow?.show_reference_number) || safeText(selectedShow?.name) || "this show";
     return {
       hasSpecificCalls: calls.length > 0,
-      position: roles.length ? roles.join(" / ") : availabilityCandidateRole || "Event crew",
-      area: areas.length ? areas.join(" / ") : "",
+      position: roles.length > 1 || areas.length > 1 ? "See position details below" : roles[0] || availabilityCandidateRole || "Event crew",
+      area: roles.length > 1 || areas.length > 1 ? "See position details below" : areas[0] || "",
       venue_or_location: venueOrLocation,
       show_reference: showReference,
       event_name: safeText(selectedShow?.name),

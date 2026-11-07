@@ -1,4 +1,4 @@
-import { cleanAvailabilityMessage } from "@/lib/availability-message";
+import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
 import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting, normalizeReminderLocationGreeting } from "@/lib/schedule-locations";
 import { processCoordinatorPurchaseOrders } from "@/lib/coordinator-purchase-orders";
@@ -612,16 +612,15 @@ function formatTimeRange(call: SubCallRow) {
   return `${formatTime(call.start_time)}–${formatTime(call.end_time)}`;
 }
 
-function formatAvailabilityScheduleLines(calls: Array<{ labor_date: string; start_time?: string | null; end_time?: string | null; open_positions?: number; rate?: string }>) {
+function formatAvailabilityScheduleLines(calls: Array<{ labor_date: string; start_time?: string | null; end_time?: string | null; open_positions?: number; rate?: string; role_name?: string; area?: string }>) {
   const mixedRates = new Set(calls.map(call => call.rate).filter(Boolean)).size > 1;
-  return [...calls]
-    .filter((call) => safeText(call.labor_date) || safeText(call.start_time) || safeText(call.end_time))
-    .sort((a, b) => safeText(a.labor_date).localeCompare(safeText(b.labor_date)) || safeText(a.start_time).localeCompare(safeText(b.start_time)) || safeText(a.end_time).localeCompare(safeText(b.end_time)))
-    .map((call) => {
-      const timeRange = safeText(call.start_time) || safeText(call.end_time) ? `${formatTime(call.start_time)}–${formatTime(call.end_time)}` : "";
-      return [call.labor_date ? formatDate(call.labor_date) : "", timeRange, mixedRates ? safeText(call.rate) : "", call.open_positions === undefined ? "" : `${call.open_positions} position${call.open_positions === 1 ? "" : "s"} open`].filter(Boolean).join(" · ");
-    })
-    .join("\n");
+  return formatAvailabilityGroups([...calls]
+    .filter(call => safeText(call.labor_date) || safeText(call.start_time) || safeText(call.end_time))
+    .sort((a, b) => safeText(a.labor_date).localeCompare(safeText(b.labor_date)) || safeText(a.start_time).localeCompare(safeText(b.start_time)))
+    .map(call => ({
+      position: safeText(call.role_name) || "Crew", area: safeText(call.area),
+      line: [call.labor_date ? formatDate(call.labor_date) : "", safeText(call.start_time) || safeText(call.end_time) ? `${formatTime(call.start_time)}–${formatTime(call.end_time)}` : "", mixedRates ? safeText(call.rate) : ""].filter(Boolean).join(" · "),
+    })));
 }
 
 function assignmentStartTime(assignment: AssignmentRow, call: SubCallRow) {
@@ -781,7 +780,7 @@ function enforceAvailabilityRate(body: string, expectedRate: string) {
   // The final queued body must always match this request's selected rate.
   text = text.replace(/^\s*Rate\s*:\s*.*$/gim, `Rate: ${rate}`);
   if (rate === "Varies by shift (see below)") return cleanAvailabilityMessage(text);
-  return text.replace(/\$\s*\d+(?:\.\d{1,2})?\s*(?:\/\s*(?:hr|hour)|per\s+hour)\b/gi, rate);
+  return cleanAvailabilityMessage(text.replace(/\$\s*\d+(?:\.\d{1,2})?\s*(?:\/\s*(?:hr|hour)|per\s+hour)\b/gi, rate));
 }
 
 function formatHourlyRate(value: unknown) {
@@ -2162,12 +2161,13 @@ async function queueAvailabilityCandidates(
   const callAreas = uniqueValues(availabilityCalls.map((call) => call.area));
   const callRates = uniqueValues(availabilityCalls.map((call) => call.rate));
   const callDates = uniqueValues(availabilityCalls.map((call) => call.labor_date)).sort();
-  const selectedRole = safeText(body.role_name) || callRoles.join(" / ") || "Event crew";
+  const groupedPositions = callRoles.length > 1 || callAreas.length > 1;
+  const selectedRole = groupedPositions ? "See position details below" : safeText(body.role_name) || callRoles[0] || "Event crew";
   const selectedCity = safeText(body.city_name) || safeText(show.rate_city) || safeText(show.event_location);
   const availabilitySchedule = availabilityCalls.length
     ? formatAvailabilityScheduleLines(availabilityCalls)
     : safeText(body.availability_schedule) || `${formatDate(show.show_start)} through ${formatDate(show.show_end)}`;
-  const availabilityArea = safeText(body.availability_area) || callAreas.join(" / ");
+  const availabilityArea = groupedPositions ? "See position details below" : safeText(body.availability_area) || callAreas[0] || "";
   const availabilityRate = mixedScheduleRates ? "Varies by shift (see below)" : safeText(body.availability_rate) || callRates.join(" / ") || "TBD";
   const venueOrLocation = safeText(show.venue) || safeText(show.event_location);
   const availabilityStart = callDates[0] || show.show_start;
