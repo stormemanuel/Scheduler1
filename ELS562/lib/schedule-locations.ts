@@ -40,6 +40,18 @@ export function normalizeScheduleLocationGreeting(template: string) {
 export function normalizeReminderLocationGreeting(template: string) {
   if (!/\{next_call_sentence\}|\{location\}/i.test(template)) return template;
   return template.replace(/(\{show_name\})[ \t]+at[ \t]+\{venue\}/gi, "$1")
-    .replace(/(\{next_call_sentence\})\s+(\{meet_up_section\})/gi, "$1\n$2")
-    .replace(/(\{meet_up_section\})\s+(\{booth_line\})/gi, "$1\n$2");
+    .replace(/(\{next_call_sentence\})\s+(\{meet_up_section\})/gi, "$1\n\n$2")
+    .replace(/(\{meet_up_section\})\s+(\{booth_line\})/gi, "$1\n\n$2");
+}
+
+export function formatReminderDetails(value: string) {
+  let text = value
+    .replace(/^Call:[ \t]*(?:\n[ \t]*)*/gim, "Call:\n\n")
+    .replace(/\n[ \t]*((?:Location|Meet-up|Area|Your assigned area):)/gi, "\n\n$1")
+    .replace(/^[ \t]*(?:Tools:[ \t]*)?Please bring (?:a )?(?:screwdriver|skrewdriver) and (?:a )?(?:crescent|cresent) wrench\.[ \t]*$/gim, "")
+    .replace(/\n{3,}/g, "\n\n").trim();
+  const tools = "Please bring a screwdriver and crescent wrench.";
+  const confirmation = /\n*(Please reply confirmed\.|See you soon\. Please confirm\.|Please confirm\.)/i;
+  text = confirmation.test(text) ? text.replace(confirmation, `\n\n${tools}\n\n$1`) : `${text}\n\n${tools}`;
+  return text.replace(/\n{3,}/g, "\n\n").trim();
 }

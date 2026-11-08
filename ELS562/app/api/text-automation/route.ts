@@ -1,6 +1,6 @@
 import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
-import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting, normalizeReminderLocationGreeting } from "@/lib/schedule-locations";
+import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting, normalizeReminderLocationGreeting, formatReminderDetails } from "@/lib/schedule-locations";
 import { processCoordinatorPurchaseOrders } from "@/lib/coordinator-purchase-orders";
 import { formatCancellationMessage } from "@/lib/cancellation-message";
 import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
@@ -756,7 +756,7 @@ function applyTemplate(template: string, values: Record<string, string>) {
 }
 
 function cleanReminderBody(value: string) {
-  return safeText(value)
+  return formatReminderDetails(safeText(value)
     .replace(/Meet up here:\s*([^\n]+)/gi, "Meet-up: $1")
     // Older reminders used different work-area labels; retain the actual area name.
     .replace(/^(?:Your assigned work area|Area you're assigned to|Your assigned area):[ \t]*\n[ \t]*([^\n]+)$/gim, "Your assigned area: $1")
@@ -765,7 +765,7 @@ function cleanReminderBody(value: string) {
     .replace(/Your assigned area: Booth[ \t]+Booth[ \t]+/gi, "Your assigned area: Booth ")
     .replace(/\n*Meet up here:\s*(?:\n\s*)+(?=(?:Your assigned area:|Please|Coordinator|Emanuel Labor Services|$))/gi, "\n")
     .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .trim());
 }
 
 function applyReminderTemplate(template: string, values: Record<string, string>) {
@@ -879,9 +879,9 @@ const updatedScheduleNotice = "*****UPDATED SCHEDULE PLEASE CONFIRM CHANGES*****
 const scheduleLateHourlyDisclaimer = "If anyone is 15 minutes late or more, that shift will be paid hourly.";
 const onSiteReplacementSummary = "On-site Replacement: You must be onsite and at the listed meet-up location on time, ready to work. If you are not used, you will receive a flat $50 show-up payment. If you are used to replace a scheduled crew member, the $50 show-up payment is waived and you will be paid the rate for the shift and position you work.";
 const defaultScheduleTemplate = compactScheduleNotes(`Hi {first_name} – {show_name}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\n{booth_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`);
-const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name}.\n\n{next_call_sentence}\n{meet_up_section}\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
-const defaultDayOfReminderTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n{meet_up_section}\n{booth_line}\n\nSee you soon. Please confirm.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
-const defaultDailyAfterFirstDayTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n{meet_up_section}\n{booth_line}\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
+const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name}.\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease bring a screwdriver and crescent wrench.\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
+const defaultDayOfReminderTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease bring a screwdriver and crescent wrench.\n\nSee you soon. Please confirm.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
+const defaultDailyAfterFirstDayTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease bring a screwdriver and crescent wrench.\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 
 function isUpdatedScheduleMessage(body: string, reminderKey = "") {
   // Notices sit below the header. Accept the former wording for queued texts,
