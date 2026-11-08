@@ -355,7 +355,7 @@ export function exportDocumentPdf(document: ExportDocument, filenameBase?: strin
 }
 
 /** Crew-list preview with an actual PDF and native file sharing on supported phones. */
-export async function exportDocumentPdfFile(document: ExportDocument, filenameBase?: string) {
+export async function exportDocumentPdfFile(document: ExportDocument, filenameBase?: string, options?: { previewHtml?: string; createPdf?: () => Promise<Blob> }) {
   // Open during the original tap, before loading the PDF libraries.
   const win = window.open("", "_blank");
   const filename = safeFilename(filenameBase || document.title, "pdf");
@@ -365,7 +365,7 @@ export async function exportDocumentPdfFile(document: ExportDocument, filenameBa
       <a id="pdf-save" hidden>Save PDF</a><button type="button" id="pdf-share" disabled>Share PDF</button>
       <a id="pdf-open" hidden target="_blank" rel="noopener">Open PDF</a>
       <button type="button" id="pdf-print">Print</button><span id="pdf-status" role="status">Preparing PDF…</span>`;
-    const html = buildExportHtml(document).replace(/<div class="screen-actions">[\s\S]*?<\/div>/, `<div class="screen-actions">${actions}</div>`)
+    const html = (options?.previewHtml || buildExportHtml(document)).replace(/<div class="screen-actions">[\s\S]*?<\/div>/, `<div class="screen-actions">${actions}</div>`)
       .replace('<meta charset="utf-8" />', '<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />')
       .replace('</style>', '.screen-actions{flex-wrap:wrap;align-items:center}.screen-actions a{background:#07313b;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:bold}.screen-actions [hidden]{display:none}.screen-actions #pdf-status{font-size:13px}.screen-actions button:disabled{opacity:.5}</style>');
     win.document.open(); win.document.write(html); win.document.close(); win.document.title = filename;
@@ -374,8 +374,9 @@ export async function exportDocumentPdfFile(document: ExportDocument, filenameBa
     status = win.document.getElementById("pdf-status");
   }
   try {
-    const { createExportPdf } = await import("@/lib/export-pdf-file");
-    const blob = await createExportPdf(document, ELS_EXPORT_LOGO_DATA_URI);
+    const blob = options?.createPdf
+      ? await options.createPdf()
+      : await (await import("@/lib/export-pdf-file")).createExportPdf(document, ELS_EXPORT_LOGO_DATA_URI);
     const url = URL.createObjectURL(blob);
     if (!win || win.closed) {
       const link = window.document.createElement("a"); link.href = url; link.download = filename;

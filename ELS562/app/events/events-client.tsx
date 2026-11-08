@@ -9313,7 +9313,7 @@ function EventsClientInner({
     `;
   }
 
-  function openSignInSheetPdf(days: LaborDayRecord[], options?: { blankDate?: boolean; filenameSuffix?: string }) {
+  async function openSignInSheetPdf(days: LaborDayRecord[], options?: { blankDate?: boolean; filenameSuffix?: string }) {
     if (!selectedShow) { setMsg({ kind: "error", text: "Select a show first." }); return; }
     if (!options?.blankDate && !days.length) {
       setMsg({ kind: "error", text: "Choose a labor date or use Blank Date / No Labor Day." });
@@ -9377,20 +9377,20 @@ function EventsClientInner({
   ${pages.join("")}
 </body>
 </html>`;
-    const win = window.open("", "_blank");
-    if (!win) {
-      setMsg({ kind: "error", text: "Pop-up blocked. Allow pop-ups for ELS, then try the sign-in sheet again." });
-      return;
+    const sheets = (options?.blankDate ? [undefined] : days).map(day => ({
+      clientEvent: signInSheetClientEventLabel(), date: day ? formatFullDate(day.labor_date) : "",
+      location: signInSheetLocationLabel(), crewLead: signInSheetCrewLeadLabel(day?.id), projectManager: signInSheetProjectManagerLabel(),
+      rowCount: options?.blankDate ? 30 : Math.max(20, signInSheetScheduledCountForDay(day?.id || "") + 5),
+    }));
+    try {
+      await exportDocumentPdfFile({ title: "Emanuel Labor Services - Sign In / Sign Out Sheet", sections: [] }, filename, {
+        previewHtml: html,
+        createPdf: async () => (await import("@/lib/sign-in-pdf")).createSignInPdf(sheets, ELS_EXPORT_LOGO_DATA_URI),
+      });
+      setMsg({ kind: "success", text: "Sign-in sheets ready. Use Save PDF or Share PDF in the preview." });
+    } catch (error) {
+      setMsg({ kind: "error", text: error instanceof Error ? error.message : "Sign-in PDF could not be prepared. Please try again." });
     }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.document.title = `${filename}.pdf`;
-    win.setTimeout(() => {
-      win.focus();
-      win.print();
-    }, 350);
-    setMsg({ kind: "success", text: options?.blankDate ? "Blank-date sign-in sheet opened." : days.length > 1 ? "All dated sign-in sheets opened." : "Selected-date sign-in sheet opened." });
   }
 
   function exportSelectedSignInSheetDate() {

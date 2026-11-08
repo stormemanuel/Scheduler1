@@ -13,11 +13,20 @@ let passed=0;function check(name,fn){fn();passed++;console.log('PASS '+name);}
  const parsed=await require('pdf-parse/lib/pdf-parse.js')(bytes);
  check('long crew list paginates and retains first and last workers',()=>{assert.ok(parsed.numpages>1);for(const name of ['Worker 001','Worker 180','Final Worker','LAST ROW MUST BE INCLUDED'])assert.ok(parsed.text.replace(/\s+/g,' ').includes(name),name);});
  check('PDF retains show metadata and section headings',()=>{for(const label of ['MOBILE TEST','NMR Events','100 Test St','Test Booth - Day 1','Day 2'])assert.ok(parsed.text.includes(label),label);});
+ const signIn=load('lib/sign-in-pdf.ts');
+ const sheets=[{clientEvent:'NMR - Sign In Test',date:'November 10, 2026',location:'Test Venue - 100 Test St',crewLead:'Test Lead',projectManager:'Test Manager',rowCount:20},{clientEvent:'NMR - Sign In Test',date:'November 11, 2026',location:'Test Venue - 100 Test St',crewLead:'Day Two Lead',projectManager:'Test Manager',rowCount:35}];
+ const signInBytes=Buffer.from(await (await signIn.createSignInPdf(sheets,exportsModule.ELS_EXPORT_LOGO_DATA_URI)).arrayBuffer());
+ if(process.env.SIGN_IN_TEST_OUTPUT)fs.writeFileSync(process.env.SIGN_IN_TEST_OUTPUT,signInBytes);
+ const signInParsed=await require('pdf-parse/lib/pdf-parse.js')(signInBytes);
+ check('all-date sign-in export is a real PDF with both dates and lead details',()=>{assert.equal(signInBytes.subarray(0,5).toString(),'%PDF-');for(const label of ['November 10, 2026','November 11, 2026','Day Two Lead','Name Printed','Lunch Out','Lunch In','Time Out','Signature','Manager Signature','Review Date'])assert.ok(signInParsed.text.includes(label),label);assert.ok(signInParsed.numpages>=2);});
+ const blank=await signIn.createSignInPdf([{...sheets[0],date:'',rowCount:30}],exportsModule.ELS_EXPORT_LOGO_DATA_URI);
+ const blankParsed=await require('pdf-parse/lib/pdf-parse.js')(Buffer.from(await blank.arrayBuffer()));
+ check('blank-date sign-in sheet retains date writing line and signature instructions',()=>{assert.ok(!blankParsed.text.includes('November 10'));assert.ok(blankParsed.text.includes('________________________'));assert.ok(blankParsed.text.includes('certify its accuracy'));});
  if(process.env.BROWSER_TEST_MODULES){
   const {build}=require(path.join(process.env.BROWSER_TEST_MODULES,'esbuild'));
   const {chromium}=require(path.join(process.env.BROWSER_TEST_MODULES,'playwright-core'));
-  const bundle=await build({stdin:{contents:'import {exportDocumentPdfFile} from "./lib/export-documents";window.exportPdf=exportDocumentPdfFile;',resolveDir:root,loader:'ts'},bundle:true,write:false,format:'iife',platform:'browser',alias:{'@':root},logLevel:'silent'});
-  const server=require('http').createServer((req,res)=>{if(req.url==='/bundle.js'){res.setHeader('Content-Type','text/javascript');res.end(bundle.outputFiles[0].contents);}else{res.setHeader('Content-Type','text/html');res.end('<button id="export">PDF Crew List</button><script src="/bundle.js"></script><script>document.getElementById("export").onclick=()=>window.exportPdf('+JSON.stringify(fixture)+',"mobile_crew_list");</script>');}});
+  const bundle=await build({stdin:{contents:'import {exportDocumentPdfFile} from "./lib/export-documents";import {createSignInPdf} from "./lib/sign-in-pdf";import {ELS_EXPORT_LOGO_DATA_URI} from "./lib/export-documents";window.exportPdf=exportDocumentPdfFile;window.exportSignIn=(sheets)=>exportDocumentPdfFile({title:"Sign In Test",sections:[]},"mobile_sign_in",{previewHtml:`<!doctype html><meta charset="utf-8" /><style></style><div class="screen-actions">Old Print Button</div><h1>Sign In / Sign Out</h1>`,createPdf:()=>createSignInPdf(sheets,ELS_EXPORT_LOGO_DATA_URI)});',resolveDir:root,loader:'ts'},bundle:true,write:false,format:'iife',platform:'browser',alias:{'@':root},logLevel:'silent'});
+  const server=require('http').createServer((req,res)=>{if(req.url==='/bundle.js'){res.setHeader('Content-Type','text/javascript');res.end(bundle.outputFiles[0].contents);}else{res.setHeader('Content-Type','text/html');res.end('<button id="sign-in">Sign In Sheets</button><button id="export">PDF Crew List</button><script src="/bundle.js"></script><script>document.getElementById("export").onclick=()=>window.exportPdf('+JSON.stringify(fixture)+',"mobile_crew_list");document.getElementById("sign-in").onclick=()=>window.exportSignIn('+JSON.stringify(sheets)+');</script>');}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const browser=await chromium.launch({executablePath:'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
   try{
@@ -36,6 +45,12 @@ let passed=0;function check(name,fn){fn();passed++;console.log('PASS '+name);}
    check('Share PDF passes real PDF file to native share sheet',()=>{assert.equal(shared.name,'mobile_crew_list.pdf');assert.equal(shared.type,'application/pdf');assert.equal(shared.magic,'%PDF-');});
    await popup.evaluate(()=>{Object.defineProperty(navigator,'share',{configurable:true,value:()=>Promise.reject(new DOMException('Canceled','AbortError'))});});await popup.click('#pdf-share');await popup.waitForFunction(()=>document.querySelector('#pdf-status').textContent.includes('Sharing canceled'));
    check('canceling sharing keeps save and open controls available',()=>{});assert.equal(await popup.locator('#pdf-save').isVisible(),true);
+   const signInPopupPromise=page.waitForEvent('popup');await page.click('#sign-in');const signInPopup=await signInPopupPromise;await signInPopup.waitForFunction(()=>document.querySelector('#pdf-status')?.textContent.includes('PDF ready'));
+   const signInDownloadPromise=signInPopup.waitForEvent('download');await signInPopup.click('#pdf-save');const signInDownload=await signInDownloadPromise;
+   check('sign-in preview downloads an actual .pdf through shared save controls',()=>{assert.equal(signInDownload.suggestedFilename(),'mobile_sign_in.pdf');});
+   assert.equal(fs.readFileSync(await signInDownload.path()).subarray(0,5).toString(),'%PDF-');
+   await signInPopup.click('#pdf-share');await signInPopup.waitForFunction(()=>window.sharedFile);
+   check('sign-in native sharing receives a PDF file',()=>{});assert.equal((await signInPopup.evaluate(()=>window.sharedFile)).name,'mobile_sign_in.pdf');await signInPopup.close();
    await popup.close();
    await context.addInitScript(()=>{Object.defineProperty(Navigator.prototype,'canShare',{configurable:true,value:()=>false});});await page.reload();
    const fallback=await ready();assert.equal(await fallback.locator('#pdf-share').isVisible(),false);assert.equal(await fallback.locator('#pdf-save').isVisible(),true);assert.equal(await fallback.locator('#pdf-open').isVisible(),true);
