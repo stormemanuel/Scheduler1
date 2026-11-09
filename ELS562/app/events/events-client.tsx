@@ -1,5 +1,6 @@
 "use client";
 
+import { matchesEventCallSearch } from "@/lib/event-call-search";
 import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
 import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting, normalizeReminderLocationGreeting, formatReminderDetails } from "@/lib/schedule-locations";
@@ -3502,6 +3503,11 @@ function EventsClientInner({
 
   const [viewMode, setViewMode] = useState<ViewMode>(calendarCreateDate ? "edit" : "overview");
   const [eventDisplayMode, setEventDisplayMode] = useState<EventDisplayMode>(canViewFeedbackForms && initialOpenFeedback ? "feedback" : defaultEventDisplayMode);
+  const [eventSubCallSearch, setEventSubCallSearch] = useState("");
+  const deferredEventSubCallSearch = useDeferredValue(eventSubCallSearch);
+  const eventSubCallSearchActive = Boolean(eventSubCallSearch.trim());
+  useEffect(() => { setEventSubCallSearch(""); }, [selectedShowId]);
+
   const [bookingFilter, setBookingFilter] = useState<BookingViewFilter>("needs");
   const [bookingFullyBookedExpanded, setBookingFullyBookedExpanded] = useState(false);
   const [expandedBookingBoothKeys, setExpandedBookingBoothKeys] = useState<string[]>([]);
@@ -5092,6 +5098,19 @@ function EventsClientInner({
       });
   }, [visibleLaborDays, subCallsByDayId, assignmentsByCallId, crewById]);
 
+  const eventSearchCallIds = useMemo(() => new Set(displayCalls.filter(({ day, call, callAssignments }) => {
+    const coordinator = appUserById.get(call.assigned_coordinator_user_id || selectedShow?.assigned_coordinator_user_id || "");
+    const people = callAssignments.filter(({ assignment }) => !assignment.privacy_hidden).flatMap(({ crew }) => [crew?.name]);
+    return matchesEventCallSearch(deferredEventSubCallSearch, [
+      call.area, call.po_number, subCallReferenceNumber(call), subCallBoothNumber(call), call.role_name, call.location,
+      day.labor_date, day.label, call.area_lead_name, coordinator?.full_name, coordinator?.email, ...people,
+    ]);
+  }).map(({ call }) => call.id)), [displayCalls, deferredEventSubCallSearch, appUserById, selectedShow?.assigned_coordinator_user_id]);
+
+  const eventSearchDays = useMemo(() => eventSubCallSearchActive
+    ? visibleLaborDays.filter(day => (subCallsByDayId.get(day.id) || []).some(call => eventSearchCallIds.has(call.id)))
+    : visibleLaborDays, [visibleLaborDays, subCallsByDayId, eventSearchCallIds, eventSubCallSearchActive]);
+
   const scheduleExportShowIds = useMemo(() => {
     if (!selectedShow) return [] as string[];
     return [selectedShow.id, ...linkedScheduleShowIds.filter((showId) => showId !== selectedShow.id && showById.has(showId))];
@@ -5206,6 +5225,11 @@ function EventsClientInner({
       }))
       .sort(compareBoothViewGroups);
   }, [displayCalls]);
+
+  // Keep the original area objects for edit/delete actions; filter only their displayed calls.
+  const eventSearchBoothSections = useMemo(() => eventSubCallSearchActive
+    ? boothSections.filter(section => section.calls.some(({ call }) => eventSearchCallIds.has(call.id)))
+    : boothSections, [boothSections, eventSearchCallIds, eventSubCallSearchActive]);
 
   const bookingBoothSections = useMemo(() => {
     const map = new Map<string, {
@@ -16536,6 +16560,21 @@ function EventsClientInner({
                 </div>
               </div>
 
+              <div className="card compact" role="search" style={{ marginTop: 12, marginBottom: 12 }}>
+                <label className="field" style={{ marginBottom: 8 }}>
+                  <span>Search this event</span>
+                  <input type="search" aria-label="Search event sub-calls" placeholder="RO, PO, area, booth, position, or person's name…" value={eventSubCallSearch} onChange={(event) => {
+                    setEventSubCallSearch(event.target.value);
+                    if (event.target.value.trim() && eventDisplayMode !== "day" && eventDisplayMode !== "booth") setEventDisplayMode("booth");
+                  }} />
+                </label>
+                <div className="row" style={{ alignItems: "center" }}>
+                  <span className="small muted" role="status" aria-live="polite">{eventSubCallSearchActive ? `${eventSearchCallIds.size} of ${displayCalls.length} sub-calls match · ${eventSearchDays.length} labor day${eventSearchDays.length === 1 ? "" : "s"}` : "Find matching sub-calls and their associated crew across this event’s dates."}</span>
+                  {eventSubCallSearch ? <button type="button" className="ghost" onClick={() => setEventSubCallSearch("")}>Clear search</button> : null}
+                </div>
+                {eventSubCallSearchActive && !eventSearchCallIds.size ? <p style={{ marginBottom: 0 }}>No matching sub-calls. Try another RO, PO, area, or assigned person's name.</p> : null}
+              </div>
+
               {((editorMode === "show" && Boolean(editingShowId)) || (editorMode === "day" && !editingDayId)) ? renderEditorPanel() : null}
 
               {eventDisplayMode === "messages" ? (
@@ -16903,9 +16942,9 @@ ${checklistText}`, "Checklist")}>Copy checklist</button>
                       <div className="small muted">Separated by date with clear day breaks.</div>
                     </div>
                   </div>
-                  {visibleLaborDays.length ? visibleLaborDays.map((day) => {
-                    const isOpen = expandedDayIds.includes(day.id);
-                    const dayCalls = subCallsByDayId.get(day.id) || [];
+                  {eventSearchDays.length ? eventSearchDays.map((day) => {
+                    const isOpen = eventSubCallSearchActive || expandedDayIds.includes(day.id);
+                    const dayCalls = (subCallsByDayId.get(day.id) || []).filter(call => !eventSubCallSearchActive || eventSearchCallIds.has(call.id));
                     const dayAccentArea = dayCalls[0]?.area || day.label || day.labor_date;
                     return (
                       <div key={day.id} className="card compact" style={{ borderTop: `4px solid ${accentColorForArea(dayAccentArea, areaAccentMap)}` }}>
@@ -16932,7 +16971,7 @@ ${checklistText}`, "Checklist")}>Copy checklist</button>
                         ) : null}
                       </div>
                     );
-                  }) : <p className="small muted">No labor days yet for this event.</p>}
+                  }) : <p className="small muted">{eventSubCallSearchActive ? "No labor days match this search." : "No labor days yet for this event."}</p>}
                 </div>
               ) : (
                 <div className="list">
@@ -16988,8 +17027,9 @@ ${checklistText}`, "Checklist")}>Copy checklist</button>
                   </div>
                   {editorMode === "day" ? renderEditorPanel() : null}
                   {editorMode === "call" && !editingCallId && !addCallAreaAnchor ? renderEditorPanel() : null}
-                  {boothSections.length ? boothSections.map((section) => {
-                    const dates = [...new Set(section.calls.map((item) => item.day.labor_date))];
+                  {eventSearchBoothSections.length ? eventSearchBoothSections.map((section) => {
+                    const matchingCalls = section.calls.filter(({ call }) => !eventSubCallSearchActive || eventSearchCallIds.has(call.id));
+                    const dates = [...new Set(matchingCalls.map((item) => item.day.labor_date))];
                     return (
                       <Fragment key={section.booth}>
                         {editorMode === "call" && !editingCallId && addCallAreaAnchor === section.booth ? renderEditorPanel() : null}
@@ -16997,7 +17037,7 @@ ${checklistText}`, "Checklist")}>Copy checklist</button>
                         <div className="row" style={{ alignItems: "flex-start" }}>
                           <div>
                             <h3 style={{ margin: 0 }}>{section.booth}</h3>
-                            <div className="small muted">{section.calls.length} sub-call{section.calls.length === 1 ? "" : "s"}</div>
+                            <div className="small muted">{eventSubCallSearchActive ? `${matchingCalls.length} matching · ${section.calls.length} total sub-calls in this area` : `${section.calls.length} sub-call${section.calls.length === 1 ? "" : "s"}`}</div>
                           </div>
                           <div className="toolbar">
                             {canManageEventAccess ? <button type="button" className="ghost" disabled={saving} onClick={() => startEditArea(section)}>Edit Area</button> : null}
@@ -17038,7 +17078,7 @@ ${checklistText}`, "Checklist")}>Copy checklist</button>
                         })() : null}
                         <div className="grid" style={{ gap: 12, marginTop: 12 }}>
                           {dates.map((date) => {
-                            const callsForDate = section.calls.filter((item) => item.day.labor_date === date);
+                            const callsForDate = matchingCalls.filter((item) => item.day.labor_date === date);
                             const day = callsForDate[0]?.day;
                             return (
                               <div key={`${section.booth}-${date}`} className="card compact" style={{ background: "#f9fafb", borderLeft: `4px solid ${accentColorForArea(section.booth, areaAccentMap)}` }}>
@@ -17067,8 +17107,8 @@ ${checklistText}`, "Checklist")}>Copy checklist</button>
                     );
                   }) : (
                     <div className="card compact">
-                      <strong>No booths or areas have been added to this event.</strong>
-                      <div className="small muted" style={{ marginTop: 4 }}>Create the first booth or area by adding a sub-call.</div>
+                      <strong>{eventSubCallSearchActive ? "No booths or areas match this search." : "No booths or areas have been added to this event."}</strong>
+                      <div className="small muted" style={{ marginTop: 4 }}>{eventSubCallSearchActive ? "Clear the search to see all sub-calls." : "Create the first booth or area by adding a sub-call."}</div>
                       {canEditSelectedEventDetails ? <button type="button" className="primary" style={{ marginTop: 10 }} disabled={!visibleLaborDays.length} onClick={() => void startAddCall(visibleLaborDays[0]?.id || "")}>Add Booth / Area</button> : null}
                     </div>
                   )}
