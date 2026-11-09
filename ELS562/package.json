@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:reminder-stages": "node tests/reminder-stages.cjs",
     "test:event-call-search": "node tests/event-call-search.cjs",
     "test:mobile-pdf": "node tests/mobile-pdf.cjs",
     "test:schedule-locations": "node tests/schedule-locations.cjs",

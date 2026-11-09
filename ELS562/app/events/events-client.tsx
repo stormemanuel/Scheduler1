@@ -440,10 +440,10 @@ const textSendingMethodOptions: Array<{ value: TextSendingMethod; label: string;
 ];
 
 const automationReminderOptions: Array<{ key: AutomationReminderKey; label: string; helper: string }> = [
-  { key: "reminder_7_day", label: "7 days out · 9:00am selected timezone", helper: "First confirmation touchpoint." },
-  { key: "reminder_3_day", label: "3 days out · 9:00am selected timezone", helper: "Optional reminder only. Does not resend the full schedule." },
-  { key: "reminder_day_before", label: "Day before · 5:00pm selected timezone", helper: "Final day-before confirmation." },
-  { key: "reminder_day_of", label: "Day-of morning reminder · 2 hours before call", helper: "Short same-day message: Good Morning, we are meeting at the meet-up location and event location. See you soon. Please confirm." },
+  { key: "reminder_7_day", label: "7-day schedule reconfirmation · 9:00am selected timezone", helper: "Resends the schedule and asks crew to reconfirm as the show approaches." },
+  { key: "reminder_3_day", label: "Optional 3-day reminder · off by default", helper: "Optional reminder only. Does not resend the full schedule." },
+  { key: "reminder_day_before", label: "Day-before confirmation · 5:00pm selected timezone", helper: "Final day-before confirmation." },
+  { key: "reminder_day_of", label: "Day-of arrival reminder · 2 hours before call", helper: "Lists the shift time, work location, and meet-up point. Asks crew to text you when they arrive; no reconfirmation request." },
   { key: "reminder_daily_after_first_day", label: "Daily reminder after first day · 2 hours before each scheduled call", helper: "Sends a short confirmation message two hours before each scheduled workday after the crew member’s first labor day." },
 ];
 
@@ -8205,13 +8205,14 @@ function EventsClientInner({
     }
   }
 
-  async function queueManualReminderNow(reminderKey: "7_day" | ManualReminderKey) {
+  async function queueManualReminderNow(reminderKey: "7_day" | ManualReminderKey, initialSchedule = false) {
     if (!selectedShow) return;
     const manualSettings = { ...automationDraft, show_id: selectedShow.id, enabled: true, send_schedule: true };
     const data = await request("/api/text-automation", "POST", {
       action: "queue_manual_reminder",
       show_id: selectedShow.id,
       reminder_key: reminderKey,
+      initial_schedule: initialSchedule,
       additional_note: reminderKey === "7_day" ? scheduleAdditionalNote.trim() : "",
       settings: manualSettings,
     });
@@ -8425,7 +8426,7 @@ function EventsClientInner({
 
   async function queueIMessageSchedulesNow() {
     if (!selectedShow) return;
-    const queued = await queueManualReminderNow("7_day");
+    const queued = await queueManualReminderNow("7_day", true);
     if (!queued?.length) {
       setMsg({ kind: "error", text: "No full-show schedules were queued. Confirm the show has assigned crew with valid phone numbers." });
       return;
@@ -12364,10 +12365,10 @@ function EventsClientInner({
     const selectedScheduleSet = new Set(selectedScheduleCrewIds);
     const selectedUpdatedScheduleSet = new Set(selectedUpdatedScheduleCrewIds);
     const reminderPlanRows = [
-      { label: "7-day schedule text", enabled: automationDraft.reminder_7_day, when: formatScheduledPlanLabel(addDaysToDateString(selectedShow.show_start, -7), "09:00", automationDraft.timezone) },
+      { label: "7-day schedule reconfirmation", enabled: automationDraft.reminder_7_day, when: formatScheduledPlanLabel(addDaysToDateString(selectedShow.show_start, -7), "09:00", automationDraft.timezone) },
       { label: "3-day reminder text", enabled: automationDraft.reminder_3_day, when: formatScheduledPlanLabel(addDaysToDateString(selectedShow.show_start, -3), "09:00", automationDraft.timezone) },
       { label: "Day-before reminder", enabled: automationDraft.reminder_day_before, when: formatScheduledPlanLabel(addDaysToDateString(selectedShow.show_start, -1), "17:00", automationDraft.timezone) },
-      { label: "Day-of morning reminder", enabled: automationDraft.reminder_day_of, when: "2 hours before each crew member's first call · Good Morning, we are meeting at the meet-up location and event location. See you soon. Please confirm." },
+      { label: "Day-of arrival reminder", enabled: automationDraft.reminder_day_of, when: "2 hours before each crew member's first call · Text the coordinator on arrival at the meet-up location. No confirmation requested." },
       { label: "Daily reminder after first day", enabled: Boolean(automationDraft.reminder_daily_after_first_day), when: "2 hours before each later scheduled workday for that crew member. Skips that crew member's first scheduled labor day." },
     ];
     const nextScheduledText = selectedTextQueue
@@ -12823,14 +12824,14 @@ function EventsClientInner({
             </label>
             <label className="row small" style={{ alignItems: "center", justifyContent: "flex-start" }}>
               <input type="checkbox" checked={automationDraft.send_schedule} onChange={(event) => setAutomationField("send_schedule", event.target.checked)} />
-              Send schedule / confirmation messages
+              Send initial schedule and selected reminders
             </label>
           </div>
 
           <div className="card compact" style={{ marginTop: 14, background: "#fbfcfd" }}>
             <strong>Reminder timing</strong>
             <div className="grid grid-2" style={{ marginTop: 10 }}>
-              {automationReminderOptions.map((option) => (
+              {automationReminderOptions.filter(option => !["reminder_3_day", "reminder_daily_after_first_day"].includes(option.key)).map((option) => (
                 <label key={option.key} className="row small" style={{ alignItems: "flex-start", justifyContent: "flex-start" }}>
                   <input type="checkbox" checked={Boolean(automationDraft[option.key])} onChange={(event) => setAutomationField(option.key, event.target.checked)} />
                   <span>
@@ -12839,7 +12840,18 @@ function EventsClientInner({
                   </span>
                 </label>
               ))}
-            </div>
+            </div>            <details style={{ marginTop: 12 }}>
+              <summary>Optional reminders (off by default)</summary>
+              <div className="grid grid-2" style={{ marginTop: 10 }}>
+                {automationReminderOptions.filter(option => ["reminder_3_day", "reminder_daily_after_first_day"].includes(option.key)).map(option => (
+                  <label key={option.key} className="row small" style={{ alignItems: "flex-start", justifyContent: "flex-start" }}>
+                    <input type="checkbox" checked={Boolean(automationDraft[option.key])} onChange={event => setAutomationField(option.key, event.target.checked)} />
+                    <span><strong>{option.label}</strong><span className="muted" style={{ display: "block" }}>{option.helper}</span></span>
+                  </label>
+                ))}
+              </div>
+            </details>
+
             <div className="card compact" style={{ boxShadow: "none", marginTop: 12 }}>
               <strong>Scheduled reminder plan</strong>
               <div className="small muted">These are the normal send windows. {automationDraft.sending_method === "resend_email" ? "Email via Resend sends queued reminders automatically at these times." : automationDraft.sending_method === "shortcut" ? "Apple Shortcut Mode sends them the next time the iPhone Shortcut runs after the scheduled time." : "The selected delivery method uses these scheduled times."}</div>
@@ -13191,10 +13203,10 @@ function EventsClientInner({
               </label>
               <div className="toolbar" style={{ marginTop: 10 }}>
                 <button type="button" className="primary" onClick={queueIMessageSchedulesNow} disabled={saving || !selectedShow || !automationDraft.send_schedule}>Queue full-show iMessage schedules now</button>
-                <button type="button" className="ghost" onClick={() => queueManualReminderNow("7_day")} disabled={saving || !selectedShow || !automationDraft.send_schedule}>Queue full-show 7-day schedule now</button>
+                <button type="button" className="ghost" onClick={() => queueManualReminderNow("7_day")} disabled={saving || !selectedShow || !automationDraft.send_schedule}>Queue 7-day reconfirmation now</button>
                 <button type="button" className="ghost" onClick={() => queueManualReminderNow("3_day")} disabled={saving || !selectedShow || !automationDraft.send_schedule}>Queue 3-day now</button>
                 <button type="button" className="ghost" onClick={() => queueManualReminderNow("day_before")} disabled={saving || !selectedShow || !automationDraft.send_schedule}>Queue day-before for next call now</button>
-                <button type="button" className="ghost" onClick={() => queueManualReminderNow("day_of")} disabled={saving || !selectedShow || !automationDraft.send_schedule}>Queue morning for today/next call now</button>
+                <button type="button" className="ghost" onClick={() => queueManualReminderNow("day_of")} disabled={saving || !selectedShow || !automationDraft.send_schedule}>Queue arrival reminder for today/next call now</button>
               </div>
               <div className="grid grid-3" style={{ marginTop: 12 }}>
                 <label className="field">
@@ -13209,7 +13221,7 @@ function EventsClientInner({
                   <span>Reminder type for that day</span>
                   <select value={manualReminderDayKey} onChange={(event) => setManualReminderDayKey(event.target.value as ManualReminderKey)}>
                     <option value="day_before">Day-before reminder</option>
-                    <option value="day_of">Day-of morning reminder</option>
+                    <option value="day_of">Day-of arrival reminder</option>
                     <option value="daily_after_first_day">Daily reminder after first day</option>
                     <option value="3_day">3-day reminder</option>
                   </select>

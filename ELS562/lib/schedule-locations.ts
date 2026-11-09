@@ -51,7 +51,7 @@ export function formatReminderDetails(value: string) {
     .replace(/^[ \t]*(?:Tools:[ \t]*)?Please bring (?:a )?(?:screwdriver|skrewdriver) and (?:a )?(?:crescent|cresent) wrench\.[ \t]*$/gim, "")
     .replace(/\n{3,}/g, "\n\n").trim();
   const tools = "Please bring a screwdriver and crescent wrench.";
-  const confirmation = /\n*(Please reply confirmed\.|See you soon\. Please confirm\.|Please confirm\.)/i;
+  const confirmation = /\n*(Please reply confirmed\.|See you soon\. Please confirm\.|Please confirm\.|Please text me here when you arrive at the meet-up location\.)/i;
   text = confirmation.test(text) ? text.replace(confirmation, `\n\n${tools}\n\n$1`) : `${text}\n\n${tools}`;
   return text.replace(/\n{3,}/g, "\n\n").trim();
 }

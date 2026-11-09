@@ -1,3 +1,4 @@
+import { arrivalReminderTemplate, reconfirmSchedule } from "@/lib/reminder-stages";
 import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
 import { workLocation, workLocationLine, scheduleLocationSummary, workMeetup, normalizeScheduleLocationGreeting, normalizeReminderLocationGreeting, formatReminderDetails } from "@/lib/schedule-locations";
@@ -880,8 +881,8 @@ const scheduleLateHourlyDisclaimer = "If anyone is 15 minutes late or more, that
 const onSiteReplacementSummary = "On-site Replacement: You must be onsite and at the listed meet-up location on time, ready to work. If you are not used, you will receive a flat $50 show-up payment. If you are used to replace a scheduled crew member, the $50 show-up payment is waived and you will be paid the rate for the shift and position you work.";
 const defaultScheduleTemplate = compactScheduleNotes(`Hi {first_name} – {show_name}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\n{booth_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`);
 const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name}.\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease bring a screwdriver and crescent wrench.\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
-const defaultDayOfReminderTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease bring a screwdriver and crescent wrench.\n\nSee you soon. Please confirm.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
-const defaultDailyAfterFirstDayTemplate = "Good Morning {first_name},\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease bring a screwdriver and crescent wrench.\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
+const defaultDayOfReminderTemplate = arrivalReminderTemplate;
+const defaultDailyAfterFirstDayTemplate = arrivalReminderTemplate;
 
 function isUpdatedScheduleMessage(body: string, reminderKey = "") {
   // Notices sit below the header. Accept the former wording for queued texts,
@@ -1152,7 +1153,7 @@ function buildQueueRows(
   settings: AutomationSettings,
   bundle: Awaited<ReturnType<typeof fetchShowBundle>>,
   senderName: string,
-  options: { forceNowReminderKey?: string; laborDayId?: string; forceNowLabel?: string; additionalNote?: string; selectedCrewIds?: string[] } = {}
+  options: { forceNowReminderKey?: string; laborDayId?: string; forceNowLabel?: string; additionalNote?: string; selectedCrewIds?: string[]; initialSchedule?: boolean } = {}
 ) {
   const filteredDays = options.laborDayId ? bundle.days.filter((day) => day.id === options.laborDayId) : bundle.days;
   const filteredDayIds = new Set(filteredDays.map((day) => day.id));
@@ -1211,7 +1212,7 @@ function buildQueueRows(
           reminder_key: forceNow ? manualBatchKey : reminder.key,
           scheduled_for: forceNow ? nowIso : reminder.scheduledFor,
           status: "scheduled",
-          body: reminder.messageType === "schedule" && additionalNote ? `${messageBody}\n\n${additionalNote}` : messageBody,
+          body: (() => { const staged = reminder.key === "7_day" && !options.initialSchedule ? reconfirmSchedule(messageBody) : messageBody; return reminder.messageType === "schedule" && additionalNote ? `${staged}\n\n${additionalNote}` : staged; })(),
         });
       }
     }
@@ -1293,10 +1294,10 @@ function valuesForSpecificCall(
 }
 
 function readableReminderLabel(key: string) {
-  if (key === "7_day") return "7-day schedule";
+  if (key === "7_day") return "7-day schedule reconfirmation";
   if (key === "3_day") return "3-day reminder";
-  if (key === "day_before") return "Day-before reminder";
-  if (key === "day_of") return "Day-of morning reminder";
+  if (key === "day_before") return "Day-before confirmation";
+  if (key === "day_of") return "Day-of arrival reminder";
   if (key === "daily_after_first_day") return "Daily reminder after first day";
   return key;
 }
@@ -1476,7 +1477,7 @@ async function buildFullShowReminderPlan(
       dueIso: zonedDateTimeToUtcIso(addDays(firstRow.day.labor_date, -7), "09:00", settings.timezone),
       messageType: "schedule",
       reminderKey: `7_day_${firstRow.day.labor_date.slice(0, 10)}`,
-      body: ensureScheduleHeader(ensureSenderIdentity(applyTemplate(settings.schedule_template || defaultScheduleTemplate, firstValues), senderName), baseValues.client),
+      body: reconfirmSchedule(ensureScheduleHeader(ensureSenderIdentity(applyTemplate(settings.schedule_template || defaultScheduleTemplate, firstValues), senderName), baseValues.client)),
       row: firstRow,
     });
     pushPlan({
@@ -1634,7 +1635,7 @@ async function buildSelectedDayReminderPlan(
     const hasRecipient = emailMode ? validEmail(email) : Boolean(phone);
     const dateKey = row.day.labor_date.slice(0, 10);
     const messageType = reminderKey === "7_day" ? "schedule" : "reminder";
-    const dueIso = reminderKey === "3_day"
+    const dueIso = reminderKey === "7_day" ? zonedDateTimeToUtcIso(addDays(row.day.labor_date, -7), "09:00", settings.timezone) : reminderKey === "3_day"
       ? zonedDateTimeToUtcIso(addDays(row.day.labor_date, -3), "09:00", settings.timezone)
       : reminderKey === "day_before"
         ? zonedDateTimeToUtcIso(addDays(row.day.labor_date, -1), "17:00", settings.timezone)
@@ -1689,7 +1690,7 @@ async function buildSelectedDayReminderPlan(
       coordinator_phone: "504-657-6618",
     };
     const values = valuesForSpecificCall(baseValues, row, bundle.show);
-    const template = reminderKey === "day_of"
+    const template = reminderKey === "7_day" ? settings.schedule_template || defaultScheduleTemplate : reminderKey === "day_of"
       ? defaultDayOfReminderTemplate
       : reminderKey === "daily_after_first_day"
         ? defaultDailyAfterFirstDayTemplate
@@ -1711,7 +1712,7 @@ async function buildSelectedDayReminderPlan(
       message_type: messageType,
       reminder_key: storedReminderKey,
       requeued_from_id: result === "previously_cancelled" ? existingState?.id || null : null,
-      body: ensureSenderIdentity(applyReminderTemplate(template, values), senderName),
+      body: reminderKey === "7_day" ? reconfirmSchedule(ensureScheduleHeader(ensureSenderIdentity(applyTemplate(template, values), senderName), bundle.show.client || "")) : ensureSenderIdentity(applyReminderTemplate(template, values), senderName),
     });
   }
 
@@ -2670,6 +2671,7 @@ export async function revalidateActiveEventMessageQueue(
         const item = scheduleBySender.get(senderName)?.get(crewId);
         if (item) {
           nextBody = ensureScheduleHeader(ensureSenderIdentity(applyTemplate(settings.schedule_template || defaultScheduleTemplate, item.values), senderName), item.values.client);
+          if (key.includes("reconfirmation")) nextBody = reconfirmSchedule(nextBody);
           if (isUpdatedScheduleMessage(safeText(queued.body), safeText(queued.reminder_key))) nextBody = prependUpdatedScheduleNotice(nextBody);
         }
       } else {
@@ -3683,7 +3685,8 @@ export async function POST(request: Request) {
       ? {
           forceNowReminderKey: manualReminderKey,
           laborDayId: manualDay?.id,
-          forceNowLabel: manualReminderKey === "7_day" ? "full_show" : manualDay?.labor_date,
+          forceNowLabel: manualReminderKey === "7_day" ? (body.initial_schedule ? "full_show" : "reconfirmation") : manualDay?.labor_date,
+          initialSchedule: Boolean(body.initial_schedule),
           additionalNote: manualReminderKey === "7_day" ? additionalNote : "",
         }
       : {};
