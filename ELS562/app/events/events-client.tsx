@@ -1,5 +1,6 @@
 "use client";
 
+import { availabilityDateRange, broadAvailabilityMessage, broadAvailabilityEventLabel } from "@/lib/broad-availability";
 import { matchesEventCallSearch } from "@/lib/event-call-search";
 import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
@@ -3438,6 +3439,9 @@ function EventsClientInner({
   const [availabilityShowExistingCrewOnly, setAvailabilityShowExistingCrewOnly] = useState(false);
   const [selectedAvailabilityCrewIds, setSelectedAvailabilityCrewIds] = useState<string[]>([]);
   const [selectedAvailabilitySubCallIds, setSelectedAvailabilitySubCallIds] = useState<string[]>([]);
+  const [availabilityRequestMode, setAvailabilityRequestMode] = useState<"specific" | "date_range">("specific");
+  const [availabilityRangeStart, setAvailabilityRangeStart] = useState("");
+  const [availabilityRangeEnd, setAvailabilityRangeEnd] = useState("");
   const [availabilityPanelOpen, setAvailabilityPanelOpen] = useState(false);
   const [availabilityRatePreset, setAvailabilityRatePreset] = useState("");
   const [availabilityCustomRate, setAvailabilityCustomRate] = useState("");
@@ -4580,6 +4584,15 @@ function EventsClientInner({
     return availabilitySubCallOptions.filter((item) => selectedIds.has(item.call.id));
   }, [availabilitySubCallOptions, selectedAvailabilitySubCallIds]);
 
+  useEffect(() => {
+    setAvailabilityRequestMode("specific"); setAvailabilityRangeStart(selectedShow?.show_start || ""); setAvailabilityRangeEnd(selectedShow?.show_end || selectedShow?.show_start || "");
+  }, [selectedShow?.id]);
+  const availabilityRangeError = useMemo(() => {
+    if (availabilityRequestMode !== "date_range") return "";
+    try { availabilityDateRange(availabilityRangeStart, availabilityRangeEnd); return ""; }
+    catch (error) { return error instanceof Error ? error.message : "Choose valid dates."; }
+  }, [availabilityRequestMode, availabilityRangeStart, availabilityRangeEnd]);
+
   const selectedAvailabilitySuggestedRates = useMemo(() => {
     return [...new Set(selectedAvailabilitySubCalls.map((item) => (
       normalizeAvailabilityRateInput(availabilityRateLabelForCall(item.call, selectedShow?.rate_city || activeRateCity, liveMasterRates))
@@ -4587,13 +4600,20 @@ function EventsClientInner({
   }, [selectedAvailabilitySubCalls, selectedShow?.rate_city, activeRateCity, liveMasterRates]);
 
   const availabilitySuggestedRate = selectedAvailabilitySuggestedRates.length === 1 ? selectedAvailabilitySuggestedRates[0] : "";
-  const availabilityRateHasConflict = selectedAvailabilitySuggestedRates.length > 1;
+  const availabilityRateHasConflict = availabilityRequestMode === "specific" && selectedAvailabilitySuggestedRates.length > 1;
   const availabilityManualRate = normalizeAvailabilityRateInput(availabilityCustomRate);
   const availabilityMessageRate = availabilityRatePreset === "custom"
     ? availabilityManualRate
     : availabilityRatePreset || (!availabilityRateHasConflict ? availabilitySuggestedRate : "");
 
   const availabilityRequestDetails = useMemo(() => {
+    if (availabilityRequestMode === "date_range") return {
+      hasSpecificCalls: false, position: availabilityCandidateRole || "Event crew", area: "",
+      venue_or_location: workLocation(selectedShow || {}, {}), show_reference: broadAvailabilityEventLabel(selectedShow?.name || "", selectedShow?.show_reference_number || ""),
+      event_name: selectedShow?.name || "", show_name: selectedShow?.name || "", venue: selectedShow?.venue || "", location: workLocation(selectedShow || {}, {}),
+      rate: availabilityMessageRate, schedule: availabilityRangeError || availabilityDateRange(availabilityRangeStart, availabilityRangeEnd).label,
+    };
+
     const calls = selectedAvailabilitySubCalls.map(item => ({ ...item, rate: normalizeAvailabilityRateInput(availabilityRateLabelForCall(item.call, selectedShow?.rate_city || activeRateCity, liveMasterRates)) }));
     const roles = [...new Set(calls.map((item) => availabilityRoleName(item.call.role_name) || "Crew").filter(Boolean))];
     const areas = [...new Set(calls.map((item) => boothLabel(item.call.area)).filter(Boolean))];
@@ -4615,7 +4635,7 @@ function EventsClientInner({
       rate: availabilityRateHasConflict ? "Varies by shift (see below)" : availabilityMessageRate,
       schedule,
     };
-  }, [selectedAvailabilitySubCalls, selectedShow, availabilityCandidateRole, availabilityMessageRate, availabilityRateHasConflict, activeRateCity, liveMasterRates]);
+  }, [selectedAvailabilitySubCalls, selectedShow, availabilityCandidateRole, availabilityMessageRate, availabilityRateHasConflict, activeRateCity, liveMasterRates, availabilityRequestMode, availabilityRangeStart, availabilityRangeEnd, availabilityRangeError]);
 
   const availabilityRoleOptions = useMemo(() => {
     const roleSummary = new Map<string, { role: string; open: number }>();
@@ -4645,8 +4665,8 @@ function EventsClientInner({
   // Compare actual shift intervals, not event-wide crew membership. A worker on
   // another day of the show can still be contacted for an unfilled call.
   const availabilityBookingStatus = useMemo(() => {
-    const requested = selectedAvailabilitySubCalls.map(({ day, call }) => availabilityInterval(day.labor_date, call.start_time, call.end_time));
-    const requestUnknown = !requested.length || requested.some((interval) => interval === null);
+    const requested = availabilityRequestMode === "date_range" ? [] : selectedAvailabilitySubCalls.map(({ day, call }) => availabilityInterval(day.labor_date, call.start_time, call.end_time));
+    const requestUnknown = availabilityRequestMode === "specific" && (!requested.length || requested.some((interval) => interval === null));
     const byCrew = new Map<string, { booked: number; conflicts: number; unknown: boolean; scheduledDates: string[] }>();
     for (const assignment of assignments) {
       if (!assignmentCountsAsFilled(assignment)) continue;
@@ -4654,7 +4674,7 @@ function EventsClientInner({
       const day = call ? laborDayById.get(call.labor_day_id) : null;
       const record = byCrew.get(assignment.crew_id) || { booked: 0, conflicts: 0, unknown: requestUnknown, scheduledDates: [] };
       const interval = call && day ? availabilityInterval(day.labor_date, assignmentStart(assignment, call), assignmentEnd(assignment, call)) : null;
-      record.unknown ||= interval === null;
+      record.unknown ||= availabilityRequestMode === "specific" && interval === null;
       const conflicts = interval && requested.some((target) => target && availabilityOverlaps(target, interval)) ? 1 : 0;
       if (day?.show_id === selectedShow?.id) {
         record.booked += 1;
@@ -4664,7 +4684,7 @@ function EventsClientInner({
       byCrew.set(assignment.crew_id, record);
     }
     return byCrew;
-  }, [selectedAvailabilitySubCalls, assignments, subCallById, laborDayById, selectedShow?.id]);
+  }, [selectedAvailabilitySubCalls, assignments, subCallById, laborDayById, selectedShow?.id, availabilityRequestMode]);
 
   useEffect(() => {
     setSelectedAvailabilityCrewIds([]);
@@ -4726,7 +4746,7 @@ function EventsClientInner({
           ? Math.max(0, ...(crew.positions ?? []).map((position) => roleRateMatchScore(position.role_name, selectedRole)))
           : 0;
         const booking = availabilityBookingStatus.get(crew.id);
-        return { crew, rating, roleScore, alreadyAssigned: availabilityAssignedCrewIds.has(crew.id), bookingConflicts: booking?.conflicts || 0, bookingUnknown: booking?.unknown || !selectedAvailabilitySubCalls.length || selectedAvailabilitySubCalls.some(({ day, call }) => !availabilityInterval(day.labor_date, call.start_time, call.end_time)), bookedDates: (booking?.scheduledDates || []).sort() };
+        return { crew, rating, roleScore, alreadyAssigned: availabilityAssignedCrewIds.has(crew.id), bookingConflicts: booking?.conflicts || 0, bookingUnknown: availabilityRequestMode === "specific" && (booking?.unknown || !selectedAvailabilitySubCalls.length || selectedAvailabilitySubCalls.some(({ day, call }) => !availabilityInterval(day.labor_date, call.start_time, call.end_time))), bookedDates: (booking?.scheduledDates || []).sort() };
       })
       .sort((a, b) => {
         const ratingPriority = recommendationSortValue(b.rating.median) - recommendationSortValue(a.rating.median);
@@ -4736,7 +4756,7 @@ function EventsClientInner({
         if (b.rating.count !== a.rating.count) return b.rating.count - a.rating.count;
         return a.crew.name.localeCompare(b.crew.name);
       });
-  }, [availabilityCandidateSearch, availabilityCandidateCity, availabilityCandidateRole, availabilityRequestDetails, availabilityIncludeAssigned, availabilityShowExistingCrewOnly, availabilityBookingStatus, availabilityAssignedCrewIds, availabilityRatingStats, crewRecords]);
+  }, [availabilityCandidateSearch, availabilityCandidateCity, availabilityCandidateRole, availabilityRequestDetails, availabilityIncludeAssigned, availabilityShowExistingCrewOnly, availabilityBookingStatus, availabilityAssignedCrewIds, availabilityRatingStats, crewRecords, availabilityRequestMode]);
 
   useEffect(() => {
     setAvailabilityCandidateCity(eventPool || "All cities");
@@ -8113,6 +8133,8 @@ function EventsClientInner({
   function availabilityTemplatePreviewText() {
     const firstSelectedCrew = selectedAvailabilityCrewIds.map((id) => crewById.get(id)).find(Boolean);
     const crewName = safeText(firstSelectedCrew?.name) || "Kevin Murphy";
+    if (availabilityRequestMode === "date_range") return availabilityRangeError || broadAvailabilityMessage({ firstName: firstName(crewName), event: availabilityRequestDetails.show_reference, location: availabilityRequestDetails.location, rate: availabilityRequestDetails.rate || "Choose rate", start: availabilityRangeStart, end: availabilityRangeEnd, position: availabilityCandidateRole, coordinator: currentUserName || currentUserEmail || "Storm Leigh" });
+
     return applyAvailabilityTemplatePreview(automationDraft.availability_template || defaultAvailabilityTemplate, {
       first_name: firstName(crewName),
       crew_name: crewName,
@@ -8146,23 +8168,24 @@ function EventsClientInner({
       setMsg({ kind: "error", text: "Select at least one crew member for the availability request." });
       return;
     }
-    if (!selectedAvailabilitySubCalls.length || selectedAvailabilitySubCalls.some(({ day, call }) => !availabilityInterval(day.labor_date, call.start_time, call.end_time))) {
+    if (availabilityRequestMode === "date_range" && availabilityRangeError) { setMsg({ kind: "error", text: availabilityRangeError }); return; }
+    if (availabilityRequestMode === "specific" && (!selectedAvailabilitySubCalls.length || selectedAvailabilitySubCalls.some(({ day, call }) => !availabilityInterval(day.labor_date, call.start_time, call.end_time)))) {
       setMsg({ kind: "error", text: "Select sub-calls with complete, valid dates and times before queueing availability." });
       return;
     }
-    if (selectedAvailabilityCrewIds.some((id) => {
+    if (availabilityRequestMode === "specific" && selectedAvailabilityCrewIds.some((id) => {
       const booking = availabilityBookingStatus.get(id);
       return booking && (booking.conflicts > 0 || booking.unknown);
     })) {
       setMsg({ kind: "error", text: "Selected crew have a booking conflict or incomplete schedule. Clear the selection and review the requested calls." });
       return;
     }
-    if (!automationDraft.availability_template.trim()) {
+    if (availabilityRequestMode === "specific" && !automationDraft.availability_template.trim()) {
       setMsg({ kind: "error", text: "Enter the availability message first." });
       return;
     }
     const badAvailabilityPlaceholders = unknownAvailabilityPlaceholders(automationDraft.availability_template);
-    if (badAvailabilityPlaceholders.length) {
+    if (availabilityRequestMode === "specific" && badAvailabilityPlaceholders.length) {
       setMsg({ kind: "error", text: `Availability template has unsupported placeholder${badAvailabilityPlaceholders.length === 1 ? "" : "s"}: ${badAvailabilityPlaceholders.map((key) => `{${key}}`).join(", ")}.` });
       return;
     }
@@ -8172,9 +8195,10 @@ function EventsClientInner({
     }
     const data = await request("/api/text-automation", "POST", {
       action: "queue_availability_candidates",
+      availability_mode: availabilityRequestMode, range_start: availabilityRangeStart, range_end: availabilityRangeEnd,
       show_id: selectedShow.id,
       crew_ids: selectedAvailabilityCrewIds,
-      role_name: availabilityRequestDetails.position || availabilityCandidateRole,
+      role_name: availabilityRequestMode === "date_range" ? availabilityCandidateRole : availabilityRequestDetails.position || availabilityCandidateRole,
       city_name: availabilityCandidateCity === "All cities" ? "" : availabilityCandidateCity,
       sub_call_ids: selectedAvailabilitySubCalls.map(({ call }) => call.id),
       availability_calls: selectedAvailabilitySubCalls.map(({ day, call }) => ({
@@ -12417,6 +12441,20 @@ function EventsClientInner({
             <div className="toolbar" style={{ marginTop: 10 }}>
               <button type="button" className="ghost" onClick={() => setAvailabilityPanelOpen(false)}>Hide crew availability</button>
             </div>
+            <label className="field" style={{ marginTop: 12 }}><span>Ask availability for</span>
+              <select value={availabilityRequestMode} onChange={event => { const mode = event.target.value as "specific" | "date_range"; setAvailabilityRequestMode(mode); setSelectedAvailabilityCrewIds([]); setSelectedAvailabilitySubCallIds([]); setAvailabilityIncludeAssigned(mode === "date_range"); setAvailabilityShowExistingCrewOnly(false); }}>
+                <option value="specific">Specific open sub-calls</option><option value="date_range">A broader date range</option>
+              </select>
+            </label>
+            {availabilityRequestMode === "date_range" ? <div className="card compact">
+              <strong>General date-range availability</strong>
+              <div className="grid grid-2" style={{ marginTop: 10 }}>
+                <label className="field"><span>From</span><input type="date" value={availabilityRangeStart} onChange={event => { setAvailabilityRangeStart(event.target.value); setSelectedAvailabilityCrewIds([]); }} /></label>
+                <label className="field"><span>Through</span><input type="date" value={availabilityRangeEnd} onChange={event => { setAvailabilityRangeEnd(event.target.value); setSelectedAvailabilityCrewIds([]); }} /></label>
+              </div>
+              <div className="small muted">Ask which days they can work within this span. Select the outreach rate below. This does not book or confirm any shifts.</div>
+              {availabilityRangeError ? <p className="error">{availabilityRangeError}</p> : null}
+            </div> : <>
             <div className="card compact" style={{ marginTop: 12, boxShadow: "none", background: "#fbfcfd" }}>
               <div className="row" style={{ alignItems: "flex-start" }}>
                 <div>
@@ -12461,6 +12499,7 @@ function EventsClientInner({
                 {"\n"}{availabilityRequestDetails.schedule}
               </div>
             </div>
+            </>}
             <div className="grid grid-3" style={{ marginTop: 12 }}>
               <label className="field">
                 <span>City pool</span>
@@ -12470,12 +12509,12 @@ function EventsClientInner({
                 </select>
               </label>
               <label className="field">
-                <span>Position fallback</span>
+                <span>{availabilityRequestMode === "date_range" ? "Position (optional)" : "Position fallback"}</span>
                 <select value={availabilityCandidateRole} onChange={(event) => { setAvailabilityCandidateRole(event.target.value); setSelectedAvailabilityCrewIds([]); }}>
                   <option value="">Any event position</option>
                   {availabilityRoleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
                 </select>
-                <span className="small muted">Specific selected sub-calls take priority over this fallback.</span>
+                <span className="small muted">{availabilityRequestMode === "date_range" ? "Choose a position, or ask about any event position." : "Specific selected sub-calls take priority over this fallback."}</span>
               </label>
               <label className="field">
                 <span>Search crew database</span>
@@ -12538,13 +12577,13 @@ function EventsClientInner({
                 <input type="checkbox" checked={availabilityIncludeAssigned} onChange={(event) => { setAvailabilityIncludeAssigned(event.target.checked); if (!event.target.checked) setAvailabilityShowExistingCrewOnly(false); }} />
                 Include crew already assigned to this event
               </label>
-              <button type="button" className={availabilityShowExistingCrewOnly ? "primary" : "ghost"} disabled={!selectedAvailabilitySubCalls.length} onClick={() => {
+              <button type="button" className={availabilityShowExistingCrewOnly ? "primary" : "ghost"} disabled={availabilityRequestMode === "specific" && !selectedAvailabilitySubCalls.length} onClick={() => {
                 const next = !availabilityShowExistingCrewOnly;
                 setAvailabilityShowExistingCrewOnly(next);
                 if (next) setAvailabilityIncludeAssigned(true);
                 setSelectedAvailabilityCrewIds([]);
               }}>Already on show · Potentially available ({[...availabilityBookingStatus.values()].filter((b) => b.booked > 0 && b.conflicts === 0 && !b.unknown).length})</button>
-              {availabilityShowExistingCrewOnly ? <span className="small muted">No conflicts found in loaded schedules. The server rechecks all bookings before queueing; personal availability is unconfirmed.</span> : null}
+              {availabilityShowExistingCrewOnly ? <span className="small muted">{availabilityRequestMode === "date_range" ? "General date-range inquiry; existing bookings still apply. Ask them to reply with available dates." : "No conflicts found in loaded schedules. The server rechecks all bookings before queueing; personal availability is unconfirmed."}</span> : null}
               <span className="small muted">Showing {displayedAvailabilityCandidates.length}{availabilityCandidates.length > displayedAvailabilityCandidates.length ? ` of ${availabilityCandidates.length}` : ""} matching crew</span>
             </div>
 
@@ -12578,14 +12617,14 @@ function EventsClientInner({
                           <strong>#{index + 1} {item.crew.name}</strong>
                           <div className="small muted">{formatPhone(item.crew.phone)} · {[item.crew.city_name, ...(item.crew.additional_city_pool_names ?? [])].filter(Boolean).join(" / ") || "No city pool"}</div>
                           <div className="small muted">{positions.length ? positions.slice(0, 4).join(" · ") : "No positions saved"}</div>
-                          {item.alreadyAssigned ? <div className="small muted">Already working this show: {item.bookedDates.join(", ") || "date unavailable"}. {item.bookingConflicts ? "Overlaps a requested call — select a different date." : "No overlap found in loaded schedules; the server checks all bookings before queueing."}</div> : null}
+                          {item.alreadyAssigned ? <div className="small muted">Already working this show: {item.bookedDates.join(", ") || "date unavailable"}. {item.bookingConflicts ? "Overlaps a requested call — select a different date." : availabilityRequestMode === "date_range" ? "General inquiry: ask which dates they can work; existing bookings still apply." : "No overlap found in loaded schedules; the server checks all bookings before queueing."}</div> : null}
                         </div>
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <span className={topTechBadgeClass(item.rating.median)}>{ratingLabel}</span>
                         <div style={{ marginTop: 5 }}>
                           <span className="badge">{availabilityCandidateRole ? (item.roleScore > 0 ? "Position match" : "Other role") : "Any position"}</span>
-                          {item.alreadyAssigned ? <span className="badge" style={{ marginLeft: 5 }}>{item.bookingUnknown ? "Schedule incomplete" : item.bookingConflicts ? "Booked during selected call" : "Potentially available"}</span> : null}
+                          {item.alreadyAssigned ? <span className="badge" style={{ marginLeft: 5 }}>{item.bookingUnknown ? "Schedule incomplete" : item.bookingConflicts ? "Booked during selected call" : availabilityRequestMode === "date_range" ? "Ask available dates" : "Potentially available"}</span> : null}
                         </div>
                       </div>
                     </div>
@@ -12594,6 +12633,7 @@ function EventsClientInner({
               }) : <div className="small muted">No crew matched this city, position, and search. Choose All cities or broaden the search.</div>}
             </div>
 
+            {availabilityRequestMode === "specific" ? <>
             <label className="field" style={{ marginTop: 12 }}>
               <span>Availability Message Template</span>
               <textarea rows={9} value={automationDraft.availability_template} onChange={(event) => setAutomationField("availability_template", event.target.value)} />
@@ -12615,13 +12655,14 @@ function EventsClientInner({
                 {availabilityTemplatePreviewOpen ? "Hide Preview" : "Preview"}
               </button>
             </div>
-            {availabilityTemplatePreviewOpen ? (
+            </> : <strong style={{ display: "block", marginTop: 12 }}>Date-range message preview</strong>}
+            {availabilityTemplatePreviewOpen || availabilityRequestMode === "date_range" ? (
               <pre className="small" style={{ whiteSpace: "pre-wrap", marginTop: 10, padding: 12, border: "1px solid var(--border)", borderRadius: 8, background: "#fff" }}>
                 {availabilityTemplatePreviewText()}
               </pre>
             ) : null}
             <div className="toolbar" style={{ marginTop: 10 }}>
-              <button type="button" className="primary" onClick={() => void queueSelectedAvailabilityMessages()} disabled={saving || !selectedAvailabilityCrewIds.length || !automationDraft.availability_template.trim()}>
+              <button type="button" className="primary" onClick={() => void queueSelectedAvailabilityMessages()} disabled={saving || !selectedAvailabilityCrewIds.length || (availabilityRequestMode === "specific" ? !automationDraft.availability_template.trim() : Boolean(availabilityRangeError) || !availabilityRequestDetails.rate)}>
                 Queue {selectedAvailabilityCrewIds.length || "selected"} availability text{selectedAvailabilityCrewIds.length === 1 ? "" : "s"}
               </button>
             </div>

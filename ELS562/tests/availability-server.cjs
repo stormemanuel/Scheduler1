@@ -3,7 +3,14 @@ const root=require('path').resolve(__dirname,'..')+'/';
 function js(s){return ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;}
 const exportsObj={};vm.runInNewContext(js(fs.readFileSync(root+'lib/availability-conflicts.ts','utf8')),{exports:exportsObj});
 vm.runInNewContext(js(fs.readFileSync(root+'lib/availability-message.ts','utf8')),{exports:exportsObj});
+for(const file of ['lib/broad-availability.ts','lib/schedule-locations.ts'])vm.runInNewContext(js(fs.readFileSync(root+file,'utf8')),{exports:exportsObj});
 const clean=exportsObj.cleanAvailabilityMessage;
+assert.throws(()=>exportsObj.availabilityDateRange('2026-02-30','2026-03-01'),/valid/);
+assert.throws(()=>exportsObj.availabilityDateRange('2026-01-01','2028-01-01'),/one year/);
+assert.throws(()=>exportsObj.broadAvailabilityRate('Varies by shift'),/hourly rate/);
+assert.equal(exportsObj.broadAvailabilityRate('$35/hr'),'$35/hr');
+assert.equal(exportsObj.broadAvailabilityEventLabel('ASH26 | Test','ASH26'),'ASH26 | Test');
+console.log('PASS date-range dates, rates, and event label are validated');
 for(const line of ['I have some days in between this span that I am looking to book for December.','I have some days in between that range that I am booking.',"I have some days between those dates I’m looking to get filled."]){assert.equal(clean('Dates:\n12/5\n\n'+line+'\n\nPlease respond ASAP.'),'Dates:\n12/5\n\nPlease respond ASAP.');}
 assert.equal(clean('Custom instructions.\nPlease respond ASAP.'),'Custom instructions.\nPlease respond ASAP.');
 console.log('PASS retired availability sentence removed from saved wording; dates and custom instructions preserved');
@@ -23,7 +30,7 @@ async function run(opts={}){
  if(opts.mixed)tables.sub_calls.push({id:'target2',crew_needed:2,labor_day_id:'target-day',start_time:'14:00',end_time:'18:00',role_name:'General AV'});
  const queried=[],written=[];
  const admin={from(table){queried.push(table);let filter,ids,one=false,lo=0,hi=Infinity;const q={select(){return q},eq(k,v){filter=k;ids=[v];return q},in(k,v){filter=k;ids=v;return q},single(){one=true;return q},order(){return q},range(a,b){lo=a;hi=b;return q},then(resolve,reject){if(opts.dbError&&table==='assignments')return Promise.resolve({data:null,error:{message:'denied'}}).then(resolve,reject);let rows=(tables[table]||[]).filter(r=>!filter||ids.includes(r[filter])).slice(lo,hi+1);return Promise.resolve({data:one?rows[0]:rows,error:null}).then(resolve,reject)}};return q;}};
- const ctx={...exportsObj,messageRateForCall:call=>call.role_name==='General AV'?'$30/hr':'$35/hr',admin,body:{show_id:'show',crew_ids:opts.crewCount?tables.crew.map(c=>c.id):['crew'],sub_call_ids:opts.noCallIds?[]:opts.mixed?['target','target2']:['target'],availability_rate:opts.mixed?'$999/hr':undefined,body:'Test only',availability_calls:[{labor_date:'2000-01-01',start_time:'01:00',end_time:'02:00'}]},safeText:v=>String(v??'').trim(),senderNameForMessage:()=> 'Tester',formatAvailabilityScheduleLines:c=>JSON.stringify(c),formatDate:v=>v,cleanPhone:v=>v,firstName:v=>v,queueIdentity:()=>({}),ensureSenderIdentity:v=>v,enforceAvailabilityRate:v=>v,applyTemplate:(v,values)=>values.availability_schedule,upsertTextQueueRows:async(a,rows)=>{written.push(...rows);return rows;}};
+ const ctx={...exportsObj,messageRateForCall:call=>call.role_name==='General AV'?'$30/hr':'$35/hr',admin,body:{availability_mode:opts.range?'date_range':undefined,range_start:opts.rangeStart||'2026-12-08',range_end:opts.rangeEnd||'2026-12-16',show_id:'show',crew_ids:opts.crewCount?tables.crew.map(c=>c.id):['crew'],sub_call_ids:opts.noCallIds?[]:opts.mixed?['target','target2']:['target'],availability_rate:opts.range?'$35/hr':opts.mixed?'$999/hr':undefined,body:'Test only',availability_calls:[{labor_date:'2000-01-01',start_time:'01:00',end_time:'02:00'}]},safeText:v=>String(v??'').trim(),senderNameForMessage:()=> 'Tester',formatAvailabilityScheduleLines:c=>JSON.stringify(c),formatDate:v=>v,cleanPhone:v=>v,firstName:v=>v,queueIdentity:()=>({}),ensureSenderIdentity:v=>v,enforceAvailabilityRate:v=>v,applyTemplate:(v,values)=>values.availability_schedule,upsertTextQueueRows:async(a,rows)=>{written.push(...rows);return rows;}};
  try{return {result:await vm.runInNewContext(code,ctx),written,queried}}catch(error){return {error:error.message,written,queried}};
 }
 const rateFunctions=ast.statements.filter(node=>ts.isFunctionDeclaration(node)&&['enforceAvailabilityRate','formatAvailabilityScheduleLines'].includes(node.name?.text)).map(node=>node.getText(ast)).join('\n');
@@ -33,6 +40,9 @@ assert.ok(outgoing.includes('2026-12-10 · 08:00–18:00 · $35/hr'));assert.ok(
 const results=[];
 async function check(name,opts,blocked){const r=await run(opts);try{if(blocked){assert.ok(r.error);assert.equal(r.written.length,0);}else{assert.equal(r.error,undefined);assert.equal(r.written.length,opts.crewCount||1);assert.ok(r.written[0].body.includes('2026-10-21'));assert.ok(!r.written[0].body.includes('2000-01-01'));if(opts.staffed===1)assert.ok(r.written[0].body.includes('\"open_positions\":1'));if(opts.mixed){assert.ok(r.written[0].body.includes('$35/hr'));assert.ok(r.written[0].body.includes('$30/hr'));assert.ok(!r.written[0].body.includes('$999/hr'));} }results.push({name,result:'PASS'});}catch(e){results.push({name,result:'FAIL',error:r.error||e.message});}}
 (async()=>{
+ const broad=await run({range:true,noCallIds:true});assert.equal(broad.error,undefined);assert.equal(broad.written.length,1);assert.ok(broad.written[0].body.includes('December 8, 2026 through December 16, 2026'));assert.ok(broad.written[0].body.includes('$35/hr'));assert.ok(broad.written[0].body.includes('any of these days'));assert.ok(!broad.queried.includes('assignments'));assert.ok(!broad.queried.includes('sub_calls'));console.log('PASS broad inquiry needs no sub-calls and does not claim crew are conflict-free');
+ const reversed=await run({range:true,rangeStart:'2026-12-16',rangeEnd:'2026-12-08'});assert.ok(reversed.error);assert.equal(reversed.written.length,0);console.log('PASS invalid date range cannot queue messages');
+
  await check('mixed rates come from saved calls rather than client override',{noBooking:true,mixed:true},false);
  await check('reject fully staffed call without queueing',{noBooking:true,staffed:2},true);
  await check('reject overstaffed call',{noBooking:true,staffed:3},true);

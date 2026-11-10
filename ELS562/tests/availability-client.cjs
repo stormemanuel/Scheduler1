@@ -16,11 +16,11 @@ const helpers=helperNames.map(n=>functions[n]).join('\n');
 const availabilityModule={exports:{}};
 vm.runInNewContext(js(fs.readFileSync(root+'lib/availability-conflicts.ts','utf8')),{exports:availabilityModule.exports});
 vm.runInNewContext(js(fs.readFileSync(root+'lib/availability-message.ts','utf8')),{exports:availabilityModule.exports});
-const base={...availabilityModule.exports,selectedShow:{id:'show'},safeText:v=>String(v??'').trim()};
-function calc({requested=['10:00','12:00'],booked=['11:00','13:00'],date='2026-10-21',bookedDate=date,status='confirmed',overrides={},includeBooking=true}={}){
+const base={availabilityRequestMode:'specific',availabilityRangeError:'',availabilityRangeStart:'2026-12-08',availabilityRangeEnd:'2026-12-16',...availabilityModule.exports,selectedShow:{id:'show'},safeText:v=>String(v??'').trim()};
+function calc({requested=['10:00','12:00'],booked=['11:00','13:00'],date='2026-10-21',bookedDate=date,status='confirmed',overrides={},includeBooking=true,mode='specific'}={}){
  const target={id:'target',labor_day_id:'target-day',start_time:requested[0],end_time:requested[1]};
  const call={id:'booked-call',labor_day_id:'booked-day',start_time:booked[0],end_time:booked[1]};
- const ctx={...base,selectedAvailabilitySubCalls:[{day:{labor_date:date},call:target}],assignments:[{crew_id:'crew',sub_call_id:call.id,status,...overrides}],subCallById:new Map(includeBooking?[[call.id,call]]:[]),laborDayById:new Map([['booked-day',{labor_date:bookedDate,show_id:'show'}]])};
+ const ctx={...base,availabilityRequestMode:mode,selectedAvailabilitySubCalls:[{day:{labor_date:date},call:target}],assignments:[{crew_id:'crew',sub_call_id:call.id,status,...overrides}],subCallById:new Map(includeBooking?[[call.id,call]]:[]),laborDayById:new Map([['booked-day',{labor_date:bookedDate,show_id:'show'}]])};
  return vm.runInNewContext(js(helpers+'\nconst calculate='+memo+'; calculate();'),ctx).get('crew');
 }
 const results=[];
@@ -51,11 +51,15 @@ check('single-rate availability keeps rate out of individual schedule lines',()=
 const positionItems=[{day:{labor_date:'2026-12-08'},call:{role_name:'Warehouse (Truck Loaders)',area:'NMR LABOR SORTING CREW RO329510',start_time:'08:00',end_time:'18:00'},openPositions:1,rate:'$25/hr'},{day:{labor_date:'2026-12-09'},call:{role_name:'LED Stagehand',area:'GENENTECH',start_time:'18:00',end_time:'04:00'},openPositions:1,rate:'$35/hr'},{day:{labor_date:'2026-12-10'},call:{role_name:'LED Stagehand',area:'GENENTECH',start_time:'18:00',end_time:'04:00'},openPositions:1,rate:'$35/hr'}];
 const positionContext={...rateContext,items:positionItems,cleanAvailabilityMessage:availabilityModule.exports.cleanAvailabilityMessage};
 check('different positions have separated headings and their own shifts without staffing counts',()=>{const message=vm.runInNewContext(js(rateCode+'\napplyAvailabilityTemplatePreview("Position: {position}\\nArea: {area}\\nRate: {rate}\\nChecking Availability :\\n{availability_schedule}",{position:"See position details below",area:"See position details below",rate:"Varies by shift (see below)",availability_schedule:formatAvailabilityScheduleLines(items)})'),positionContext);assert.ok(message.includes('Position: Warehouse (Truck Loaders)\nArea: NMR LABOR SORTING CREW RO329510\n2026-12-08'));assert.ok(message.includes('\n\nPosition: LED Stagehand\nArea: GENENTECH\n2026-12-09'));assert.ok(message.includes('2026-12-10 · 18:00–04:00 · $35/hr'));assert.ok(!/positions? open|still needed|See position details below/.test(message));});
+check('broad inquiry does not treat a partial booking as unavailable for every date',()=>{const result=calc({mode:'date_range'});assert.equal(result.conflicts,0);assert.equal(result.unknown,false);assert.equal(result.booked,1);});
 (async()=>{
  let payload;
  const context={...base,selectedAvailabilityCrewIds:['crew'],automationDraft:{availability_template:'Hello'},unknownAvailabilityPlaceholders:()=>[],availabilityRequestDetails:{rate:'$30',position:'Crew',area:'A',schedule:'Today'},availabilityRateHasConflict:false,availabilityCandidateRole:'Crew',availabilityCandidateCity:'All cities',selectedAvailabilitySubCalls:[{day:{labor_date:'2026-10-21'},call:{start_time:'10:00',end_time:'12:00'}}],availabilityBookingStatus:new Map([['crew',{conflicts:1}]]),request:async(path,method,body)=>{payload=body;return{queue:[]}},mergeQueuedTexts:()=>{},boothLabel:()=>'',eventLocationLabel:()=>'',setMsg:()=>{}};
  await vm.runInNewContext(js(functions.queueSelectedAvailabilityMessages+'\nqueueSelectedAvailabilityMessages();'),context);
  check('SAFETY: selected crew that now conflicts must be rejected before POST',()=>assert.equal(payload,undefined));
+ context.availabilityRequestMode='date_range';context.availabilityCandidateRole='';context.selectedAvailabilitySubCalls=[];context.automationDraft.availability_template='';
+ await vm.runInNewContext(js(functions.queueSelectedAvailabilityMessages+'\nqueueSelectedAvailabilityMessages();'),context);
+ check('date-range inquiry can queue without specific sub-calls or a custom template',()=>{assert.equal(payload.availability_mode,'date_range');assert.equal(payload.range_start,'2026-12-08');assert.equal(payload.range_end,'2026-12-16');assert.equal(payload.sub_call_ids.length,0);assert.equal(payload.role_name,'');});
  fs.writeFileSync(require('path').join(__dirname,'client-results.json'),JSON.stringify(results,null,2));
  for(const r of results)console.log(r.result+' '+r.name+(r.detail?' — '+r.detail:''));
  console.log(`${results.filter(r=>r.result==='PASS').length} passed; ${results.filter(r=>r.result==='FAIL').length} failed`);

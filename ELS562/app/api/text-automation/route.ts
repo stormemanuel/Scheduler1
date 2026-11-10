@@ -1,3 +1,4 @@
+import { availabilityDateRange, broadAvailabilityRate, broadAvailabilityMessage, broadAvailabilityEventLabel } from "@/lib/broad-availability";
 import { arrivalReminderTemplate, reconfirmSchedule } from "@/lib/reminder-stages";
 import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
 import { compactScheduleNotes } from "@/lib/schedule-notes";
@@ -2130,7 +2131,7 @@ async function queueAvailabilityCandidates(
   if (!showId) throw new Error("show_id is required.");
   if (!crewIds.length) throw new Error("Select at least one crew member first.");
   if (crewIds.length > 500) throw new Error("Select at most 500 crew members per availability batch. No messages queued.");
-  if (!template) throw new Error("Enter the availability message first.");
+  if (!template && body.availability_mode !== "date_range") throw new Error("Enter the availability message first.");
 
   const [showRes, crewRes] = await Promise.all([
     admin.from("shows").select("id, name, show_reference_number, venue, event_location, rate_city, show_start, show_end").eq("id", showId).single(),
@@ -2141,6 +2142,23 @@ async function queueAvailabilityCandidates(
   const show = showRes.data as ShowRow;
   const crewById = new Map(crewRes.map((crew) => [crew.id, crew]));
   const senderName = senderNameForMessage(user);
+  if (body.availability_mode === "date_range") {
+    const range = availabilityDateRange(safeText(body.range_start), safeText(body.range_end));
+    const rate = broadAvailabilityRate(safeText(body.availability_rate));
+    // A survey asks which days are available; it never asserts that a whole range is conflict-free.
+    const rows: QueueRow[] = crewIds.flatMap(crewId => {
+      const crew = crewById.get(crewId), phone = cleanPhone(safeText(crew?.phone));
+      if (!crew || !phone) return [];
+      const crewName = safeText(crew.name) || "Crew member";
+      return [{ ...queueIdentity(user), show_id: showId, crew_id: crewId, crew_name: crewName, phone,
+        message_type: "availability", reminder_key: `availability_range_${Date.now()}`, scheduled_for: new Date(Date.now() + 30_000).toISOString(), status: "scheduled",
+        body: ensureSenderIdentity(broadAvailabilityMessage({ firstName: firstName(crewName), event: broadAvailabilityEventLabel(safeText(show.name), safeText(show.show_reference_number)), location: workLocation(show, {}), rate, start: range.start, end: range.end, position: safeText(body.role_name), coordinator: senderName }), senderName),
+      }];
+    });
+    if (!rows.length) throw new Error("None of the selected crew have a valid phone number.");
+    return { queued: await upsertTextQueueRows(admin, rows), skipped: crewIds.length - rows.length };
+  }
+  if (body.availability_mode && body.availability_mode !== "specific") throw new Error("Choose specific sub-calls or a date range.");
   // Never trust client-supplied dates/times for either conflict checks or messages.
   const callIds = cleanQueueIds(body.sub_call_ids, 250);
   const verifiedCalls = await validateAvailabilityBookings(admin, showId, crewIds, callIds);
