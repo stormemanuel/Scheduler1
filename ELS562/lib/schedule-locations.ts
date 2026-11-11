@@ -46,7 +46,7 @@ export function normalizeReminderLocationGreeting(template: string) {
 
 export function formatReminderDetails(value: string) {
   let text = value
-    .replace(/^Call:[ \t]*(?:\n[ \t]*)*/gim, "Call:\n\n")
+    .replace(/^(?:Call|Your Shift):[ \t]*(?:\n[ \t]*)*/gim, "Your Shift: ")
     .replace(/\n[ \t]*((?:Location|Meet-up|Area|Your assigned area):)/gi, "\n\n$1")
     .replace(/^[ \t]*(?:Tools:[ \t]*)?Please bring (?:a )?(?:screwdriver|skrewdriver) and (?:a )?(?:crescent|cresent) wrench\.[ \t]*$/gim, "")
     .replace(/\n{3,}/g, "\n\n").trim();
