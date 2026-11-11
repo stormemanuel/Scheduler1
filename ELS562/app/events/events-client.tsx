@@ -1,5 +1,6 @@
 "use client";
 
+import { areaDisplayLabel } from "@/lib/area-display";
 import { availabilityDateRange, broadAvailabilityMessage, broadAvailabilityEventLabel } from "@/lib/broad-availability";
 import { matchesEventCallSearch } from "@/lib/event-call-search";
 import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
@@ -2795,6 +2796,10 @@ function subCallBoothNumber(call: Pick<SubCallRecord, "notes" | "booth_number" |
   return safeText(call.booth_number) || boothNumberFromNotes(call.notes) || legacyBoothFromReference(safeText(call.sub_call_reference_number) || subCallReferenceNumberFromNotes(call.notes));
 }
 
+function displayAreaForCalls(area: string, calls: SubCallRecord[]) {
+  return areaDisplayLabel(area, calls.map(call => subCallBoothNumber(call)));
+}
+
 function subCallReferenceNumber(call: Pick<SubCallRecord, "notes" | "sub_call_reference_number"> | { notes?: string | null; sub_call_reference_number?: string | null }) {
   const reference = safeText(call.sub_call_reference_number) || subCallReferenceNumberFromNotes(call.notes);
   return legacyBoothFromReference(reference) ? "" : reference;
@@ -2830,12 +2835,12 @@ function areaLeadLine(call: Pick<SubCallRecord, "area_lead_name" | "area_lead_ph
   return `Area Lead: ${[name, phone ? formatPhone(phone) : ""].filter(Boolean).join(" — ")}`;
 }
 
-function poAndAreaLeadSummary(calls: SubCallRecord[]) {
+function poAndAreaLeadSummary(calls: SubCallRecord[], options?: { omitBoothAndRo?: boolean }) {
   const boothNumbers = [...new Set(calls.map((call) => subCallBoothNumber(call)).filter(Boolean))];
   const referenceNumbers = [...new Set(calls.map((call) => subCallReferenceNumber(call)).filter(Boolean))];
   const poNumbers = [...new Set(calls.map((call) => safeText(call.po_number)).filter(Boolean))];
   const leads = [...new Set(calls.map(areaLeadLine).filter(Boolean))];
-  return [boothNumbers.length ? `Booth: ${boothNumbers.join(", ")}` : "", referenceNumbers.length ? `RO: ${referenceNumbers.join(", ")}` : "", poNumbers.length ? `PO: ${poNumbers.join(", ")}` : "", ...leads].filter(Boolean).join(" • ");
+  return [!options?.omitBoothAndRo && boothNumbers.length ? `Booth: ${boothNumbers.join(", ")}` : "", !options?.omitBoothAndRo && referenceNumbers.length ? `RO: ${referenceNumbers.join(", ")}` : "", poNumbers.length ? `PO: ${poNumbers.join(", ")}` : "", ...leads].filter(Boolean).join(" • ");
 }
 
 function timeSortValue(value: string | null | undefined) {
@@ -6921,7 +6926,7 @@ function EventsClientInner({
         <div className="row" style={{ alignItems: "flex-start" }}>
           <div>
             <strong>Add Crew</strong>
-            <div className="small muted">{call.area} • {call.role_name}</div>
+            <div className="small muted">{areaDisplayLabel(call.area, subCallBoothNumber(call))} • {call.role_name}</div>
             <div className="small muted">Pool filter: {eventPool || "All crew"}</div>
           </div>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 10, maxWidth: 620 }}>
@@ -7183,7 +7188,7 @@ function EventsClientInner({
         <div key={section.key} className="card compact" style={{ borderTop: "4px solid #f59e0b" }}>
           <div className="row" style={{ alignItems: "flex-start" }}>
             <div>
-              <h3 style={{ margin: 0 }}>{section.booth}</h3>
+              <h3 style={{ margin: 0 }}>{displayAreaForCalls(section.booth, section.calls.map(item => item.call))}</h3>
               <div className="small muted">{section.bookedCount}/{section.requestedCount || 0} booked · {section.openCount} open</div>
             </div>
             <div className="toolbar">
@@ -7208,7 +7213,7 @@ function EventsClientInner({
         <div key={section.key} className="card compact" style={{ boxShadow: "none", background: "#f8fff8", borderColor: "#bbf7d0" }}>
           <div className="row" style={{ alignItems: "flex-start" }}>
             <div>
-              <strong>{section.booth}</strong>
+              <strong>{displayAreaForCalls(section.booth, section.calls.map(item => item.call))}</strong>
               <div className="small muted">{section.bookedCount}/{section.requestedCount || 0} booked · Fully Booked</div>
             </div>
             <div className="toolbar">
@@ -7324,7 +7329,7 @@ function EventsClientInner({
         <div className="row" style={{ alignItems: "flex-start" }}>
           <div>
             <strong>{showDate ? `${day.labor_date} • ` : ""}{formatTimeRange(call)}</strong>
-            <div className="small muted">{call.area} • {call.role_name}</div>
+            <div className="small muted">{areaDisplayLabel(call.area, subCallBoothNumber(call))} • {call.role_name}</div>
             <div className="small muted">{[dayTypeLabel(effectiveCallDayType(call)), walkawayLabel(call), boothNumber ? `Booth: ${boothNumber}` : "", call.location ? `Location: ${call.location}` : "", referenceNumber ? `RO: ${referenceNumber}` : "", call.po_number ? `PO: ${call.po_number}` : "", areaLeadLine(call), `Schedule rate: ${messageRateLabelForCall(undefined, call, activeRateCity, liveMasterRates).replace(/^Rate:\s*/i, "")}`].filter(Boolean).join(" • ")}</div>
             <div className="small muted">{activeAssignmentCount}/{call.crew_needed} assigned{callAssignments.length !== activeAssignmentCount ? ` • ${callAssignments.length - activeAssignmentCount} inactive/replaced` : ""}</div>
             {openCrewSlots ? <div style={{ marginTop: 7 }}><span className="badge needs-booking-badge">⚠ Needs Booking · {openCrewSlots} open</span></div> : null}
@@ -9051,7 +9056,7 @@ function EventsClientInner({
 
     const boothSubCallSections = boothSections.map((section): ExportDocument["sections"][number] => {
       const entries = sortedBoothViewCalls(section.calls.map((item) => ({ day: item.day, call: item.call })));
-      const crewSheetSummary = poAndAreaLeadSummary(entries.map((entry) => entry.call));
+      const crewSheetSummary = poAndAreaLeadSummary(entries.map((entry) => entry.call), { omitBoothAndRo: true });
       const roleFrequency = new Map<string, number>();
       entries.forEach(({ call }) => {
         const roleKey = normalize(call.role_name);
@@ -9121,7 +9126,7 @@ function EventsClientInner({
         rowKinds.push("data");
       });
       return {
-        heading: section.booth,
+        heading: displayAreaForCalls(section.booth, entries.map(entry => entry.call)),
         subheading: crewSheetSummary,
         accentColor: "#d4a62a",
         columns: includeEmail
@@ -9149,10 +9154,10 @@ function EventsClientInner({
 
       const rows = dayCalls.reduce<ExportCell[][]>((acc, call, index) => {
         const callAssignments = crewListAssignmentsForCall(call);
-        const areaLabel = boothLabel(call.area);
+        const areaLabel = areaDisplayLabel(call.area, subCallBoothNumber(call));
         const timeLabel = formatTimeRange(call);
         const referenceNumber = subCallReferenceNumber(call);
-        const callDetails = [call.role_name, subCallBoothNumber(call) ? `Booth: ${subCallBoothNumber(call)}` : "", referenceNumber ? `RO: ${referenceNumber}` : "", call.po_number ? `PO: ${call.po_number}` : "", areaLeadLine(call), call.one_hour_walkaway ? "1 hr walkaway" : ""].filter(Boolean).join(" • ");
+        const callDetails = [call.role_name, subCallBoothNumber(call) ? `Booth: ${subCallBoothNumber(call)}` : "", call.po_number ? `PO: ${call.po_number}` : "", areaLeadLine(call), call.one_hour_walkaway ? "1 hr walkaway" : ""].filter(Boolean).join(" • ");
 
         if (index > 0) {
           const previousCall = dayCalls[index - 1];
@@ -9187,7 +9192,7 @@ function EventsClientInner({
 
       const neededTotal = dayCalls.reduce((sum, call) => sum + Math.max(0, Number(call.crew_needed || 0)), 0);
       const assignedTotal = dayCalls.reduce((sum, call) => sum + crewListAssignmentsForCall(call).length, 0);
-      const uniqueAreas = [...new Set(dayCalls.map((call) => boothLabel(call.area)).filter(Boolean))];
+      const uniqueAreas = [...new Set(dayCalls.map((call) => areaDisplayLabel(call.area, subCallBoothNumber(call))).filter(Boolean))];
 
       return {
         heading: `${day.labor_date}${day.label ? ` - ${day.label}` : ""}`,
@@ -17089,7 +17094,7 @@ ${checklistText}`, "Checklist")}>Copy checklist</button>
                         <div className="card compact" style={{ borderTop: `4px solid ${accentColorForArea(section.booth, areaAccentMap)}` }}>
                         <div className="row" style={{ alignItems: "flex-start" }}>
                           <div>
-                            <h3 style={{ margin: 0 }}>{section.booth}</h3>
+                            <h3 style={{ margin: 0 }}>{displayAreaForCalls(section.booth, section.calls.map(item => item.call))}</h3>
                             <div className="small muted">{eventSubCallSearchActive ? `${matchingCalls.length} matching · ${section.calls.length} total sub-calls in this area` : `${section.calls.length} sub-call${section.calls.length === 1 ? "" : "s"}`}</div>
                           </div>
                           <div className="toolbar">

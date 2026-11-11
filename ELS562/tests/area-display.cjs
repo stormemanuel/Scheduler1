@@ -1,0 +1,22 @@
+const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('node:assert/strict'),ts=require('typescript');
+const root=path.resolve(__dirname,'..');const js=source=>ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+const helpers={};vm.runInNewContext(js(fs.readFileSync(path.join(root,'lib/area-display.ts'),'utf8')),{exports:helpers});
+let passed=0;function check(name,fn){fn();passed++;console.log('PASS '+name);}
+check('area label removes RO and includes known booth',()=>assert.equal(helpers.areaDisplayLabel('GENENTECH RO328498','439'),'GENENTECH · Booth 439'));
+check('decimal RO reference and separate PO are removed from area name',()=>assert.equal(helpers.areaDisplayLabel('PHARMA LIGHTING RO328487.03 PO177270'),'PHARMA LIGHTING'));
+check('unknown booth is omitted and inline known booth is retained once',()=>{assert.equal(helpers.areaDisplayLabel('SANOFI Booth 2939 RO327688','2939'),'SANOFI · Booth 2939');assert.equal(helpers.areaDisplayLabel('SANOFI RO327688','TBD'),'SANOFI');});
+check('multiple booths remain visible without merging reference identities',()=>assert.equal(helpers.areaDisplayLabel('GENENTECH RO328498',['439','440','439']),'GENENTECH · Booths 439 / 440'));
+check('ordinary names containing RO letters remain intact',()=>assert.equal(helpers.areaDisplayLabel('ROCK & ROLL PRODUCTION'),'ROCK & ROLL PRODUCTION'));
+const source=fs.readFileSync(path.join(root,'app/events/events-client.tsx'),'utf8'),ast=ts.createSourceFile('client.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let builder,summary;
+function walk(node){if(ts.isFunctionDeclaration(node)&&node.name?.text==='poAndAreaLeadSummary')summary=node.getText(ast);if(ts.isFunctionDeclaration(node)&&node.name?.text==='buildCrewListDocument')builder=node.getText(ast);ts.forEachChild(node,walk)}walk(ast);
+const day={id:'day',labor_date:'2026-12-10'},call={id:'call',area:'GENENTECH RO328498',booth_number:'439',po_number:'PO181278',role_name:'LED Stagehand',start_time:'08:00',end_time:'18:00',crew_needed:1},assignment={id:'assignment',crew_id:'crew',sort_order:1,status:'confirmed'},crew={name:'Test Worker',phone:'5551234567'};
+const entries=[{day,call}];
+const context=vm.createContext({...helpers,selectedShow:{name:'Test Show',client:'NMR',venue:'Convention Center',show_start:day.labor_date,show_end:day.labor_date},selectedClientContact:null,visibleLaborDays:[day],displayCalls:entries,boothSections:[{booth:call.area,calls:entries}],assignments:[{...assignment,sub_call_id:call.id}],safeText:v=>String(v??'').trim(),normalize:v=>String(v??'').toLowerCase(),boothLabel:v=>v,subCallBoothNumber:c=>c.booth_number,subCallReferenceNumber:()=> 'RO328498',displayAreaForCalls:(area,calls)=>helpers.areaDisplayLabel(area,calls.map(c=>c.booth_number)),getCallAssignments:()=>[{assignment,crew}],assignedCoordinatorUser:null,currentUserId:'owner',isOwnerAdmin:true,assignmentCountsAsFilled:()=>true,coordinatorNameForUserId:()=> 'Coordinator',notesForAssignment:()=>[],noteSummary:()=>'',formatExportAssignmentTime:()=> '8:00 AM–6:00 PM',formatTimeRange:()=> '8:00 AM–6:00 PM',assignmentStart:()=>call.start_time,assignmentEnd:()=>call.end_time,assignmentStatusLabel:v=>v,formatPhone:v=>v,formatFullDate:v=>v,roleKeys:v=>new Set([v]),areaLeadLine:()=>'',poAndAreaLeadSummary:()=> 'PO: PO181278',eventLocationLabel:()=> '100 Test St',signInSheetCrewLeadLabel:()=> 'Not assigned',sortedBoothViewCalls:v=>v,compareCrewSheetRows:()=>0,selectedShowHasPartialCoordinatorAccess:false});
+vm.runInContext(js(summary+"\n"+builder),context);
+context.eventDisplayMode='booth';
+const booth=vm.runInContext('buildCrewListDocument()',context);
+check('booth PDF and DOCX document headings use cleaned area and booth',()=>{assert.equal(booth.sections[0].heading,'GENENTECH · Booth 439');assert.ok(!JSON.stringify(booth.sections).includes('RO328498'));});
+context.eventDisplayMode='day';const daily=vm.runInContext('buildCrewListDocument()',context);
+check('day PDF and DOCX subgroup column uses cleaned area and booth',()=>{assert.equal(daily.sections[0].rows[0][1],'GENENTECH · Booth 439');assert.ok(daily.sections[0].subheading.includes('GENENTECH · Booth 439'));assert.ok(!JSON.stringify(daily.sections).includes('RO328498'));});
+check('export formatting never changes stored RO references',()=>assert.equal(call.area,'GENENTECH RO328498'));
+console.log(passed+' area-label checks passed.');
