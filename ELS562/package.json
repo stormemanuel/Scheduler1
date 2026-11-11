@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "build:contract-pdf": "node scripts/build-contract-pdf.cjs",
+    "test:contract-terms": "node tests/contract-terms.cjs",
     "test:reminder-stages": "node tests/reminder-stages.cjs",
     "test:event-call-search": "node tests/event-call-search.cjs",
     "test:mobile-pdf": "node tests/mobile-pdf.cjs",

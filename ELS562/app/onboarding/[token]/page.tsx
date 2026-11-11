@@ -1,5 +1,6 @@
 "use client";
 
+import { CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
 import { use, useCallback, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 
 type PageProps = {
@@ -132,7 +133,7 @@ const PROFILE_CROP_PREVIEW_SIZE = 240;
 const PROFILE_CROP_OUTPUT_SIZE = 320;
 
 const IRS_W9_FORM_URL = "https://www.irs.gov/pub/irs-pdf/fw9.pdf";
-const ELS_CONTRACT_PDF_URL = "/Emanuel_Labor_Services_Independent_Contractor_Agreement_Final.pdf";
+const ELS_CONTRACT_PDF_URL = `/Emanuel_Labor_Services_Independent_Contractor_Agreement_Final.pdf?v=${CONTRACT_PAYMENT_TERMS_VERSION}`;
 const RETAINED_W9_SIGNATURE = "els-retained-w9-signature";
 const RETAINED_CONTRACT_SIGNATURE = "els-retained-contract-signature";
 
@@ -182,18 +183,7 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-const CONTRACT_CERTIFICATIONS = [
-  "Contractor is an independent contractor and not an employee of the Company.",
-  "Contractor maintains their own business and works with multiple companies.",
-  "Contractor provides their own tools, equipment, and materials.",
-  "Contractor determines how services are performed and is not under direct Company control.",
-  "Contractor is responsible for their own insurance, taxes, and business expenses.",
-  "Contractor acknowledges that they do not receive employee benefits from the Company.",
-  "Contractor understands that failure to comply with client requirements may result in removal from a project.",
-  "Contractor understands that payment is owed only for services actually performed, documented, and approved by Emanuel Labor Services LLC.",
-  "Contractor agrees to indemnify the Company against liabilities arising from their work.",
-  "Contractor agrees to adhere to professional standards, including punctuality, attire, and conduct.",
-];
+
 
 function blankContractSignature(): ContractSignatureState {
   return {
@@ -1103,12 +1093,7 @@ function ContractAgreementSection({
         <h4>1. Services to Be Performed</h4>
         <p>Contractor shall provide temporary labor or staffing services on a per-job basis. Contractor retains full control over how services are performed, subject to Company’s right to inspect work and ensure compliance with client requirements and industry standards.</p>
         <h4>2. Payment</h4>
-        <p>Company shall compensate Contractor for all hours worked at agreed-upon rates. Contractor shall submit an invoice detailing services rendered. Payment shall be made within thirty (30) days of receipt of an approved invoice. If payments are scheduled beyond thirty days, Contractor shall be notified and must agree to payment terms before accepting the contract.</p>
-        <p><strong>Payment for Work Actually Performed.</strong></p>
-        <p>Contractor is compensated only for services actually performed, documented, and approved by Emanuel Labor Services LLC. Being listed, scheduled, requested, confirmed, or placed on standby for an assignment does not by itself guarantee payment unless Emanuel Labor Services LLC separately approves such payment in writing.</p>
-        <p>No payment is owed for any shift, portion of a shift, or assignment that Contractor does not actually work, including but not limited to a no-show, call-out, refusal of assignment, late arrival after replacement, early departure without approval, or failure to perform the requested services.</p>
-        <p>All payable time must be supported by approved time records, sign-in/sign-out records, client confirmation, crew lead confirmation, or other documentation accepted by Emanuel Labor Services LLC.</p>
-        <p>Emanuel Labor Services LLC may, at its sole discretion, approve cancellation pay, standby pay, travel pay, or other special compensation only when confirmed in writing by an authorized ELS representative.</p>
+        {CONTRACT_PAYMENT_TERMS.map((term, index) => <div key={index}>{term.heading ? <p><strong>{term.heading}.</strong></p> : null}<p>{term.text}</p></div>)}
         <h4>3. Term & Termination</h4>
         <p>This Agreement shall commence on the Effective Date and shall continue until terminated by either Party. Either Party may terminate this Agreement with five (5) days’ prior written notice, except in cases of immediate termination due to breach, safety violations, or conflicts of interest. This Agreement terminates immediately upon the death of the Contractor.</p>
         <h4>4. Instrumentalities/Tools/Supplies</h4>

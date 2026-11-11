@@ -1,3 +1,4 @@
+import { CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
 import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
 import { phoneForMessaging, phoneDigitsForMatch } from "@/lib/crew-types";
 import { NextResponse } from "next/server";
@@ -269,17 +270,7 @@ type ContractSignaturePayload = {
   agreement_confirmed: boolean;
 };
 
-const CONTRACT_CERTIFICATIONS = [
-  "Contractor is an independent contractor and not an employee of the Company.",
-  "Contractor maintains their own business and works with multiple companies.",
-  "Contractor provides their own tools, equipment, and materials.",
-  "Contractor determines how services are performed and is not under direct Company control.",
-  "Contractor is responsible for their own insurance, taxes, and business expenses.",
-  "Contractor acknowledges that they do not receive employee benefits from the Company.",
-  "Contractor understands that failure to comply with client requirements may result in removal from a project.",
-  "Contractor agrees to indemnify the Company against liabilities arising from their work.",
-  "Contractor agrees to adhere to professional standards, including punctuality, attire, and conduct.",
-];
+
 
 function cleanDigits(value: unknown) {
   return safeText(value).replace(/\D/g, "");
@@ -426,7 +417,8 @@ function pdfEscape(value: string) {
 }
 
 function wrapPdfText(text: string, maxChars: number) {
-  const words = pdfEscape(text).split(/\s+/).filter(Boolean);
+  // Escape only when writing the PDF text command, after line wrapping.
+  const words = safeText(text).split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
@@ -697,10 +689,12 @@ function buildSignedContractPdf(
   const companySignedDate = submittedAt.slice(0, 10) || contract.effective_date;
 
   function checkbox(checked: boolean, text: string) {
-    line(`${checked ? `[${contractorInitials}]` : "[   ]"} ${text}`, 9.4, "F1", 13);
+    const wrapped = wrapPdfText(`${checked ? `[${contractorInitials}]` : "[   ]"} ${text}`, 96);
+    wrapped.forEach((part, index) => line(index ? `    ${part}` : part, 9.4, "F1", 13));
   }
 
   line("INDEPENDENT CONTRACTOR AGREEMENT", 16, "F2", 22);
+  line(`Payment terms revision: ${CONTRACT_PAYMENT_TERMS_VERSION}`, 8, "F1", 12);
   paragraph(
     `This Independent Contractor Agreement (Agreement) is made and entered into on ${contract.effective_date}, by and between Emanuel Labor Services LLC, a Louisiana limited liability company (the Company), and ${contractorDisplayName} (the Contractor).`,
   );
@@ -710,7 +704,7 @@ function buildSignedContractPdf(
   heading("1. Services to Be Performed");
   paragraph("Contractor shall provide temporary labor or staffing services on a per-job basis. Contractor retains full control over how services are performed, subject to Company's right to inspect work and ensure compliance with client requirements and industry standards.");
   heading("2. Payment");
-  paragraph("Company shall compensate Contractor for all hours worked at agreed-upon rates. Contractor shall submit an invoice detailing services rendered. Payment shall be made within thirty (30) days of receipt of an approved invoice. If payments are scheduled beyond thirty days, Contractor shall be notified and must agree to payment terms before accepting the contract.");
+  CONTRACT_PAYMENT_TERMS.forEach(term => { if (term.heading) heading(term.heading); paragraph(term.text); });
   heading("3. Term & Termination");
   paragraph("This Agreement shall commence on the Effective Date and shall continue until terminated by either Party. Either Party may terminate this Agreement with five (5) days' prior written notice, except in cases of immediate termination due to breach, safety violations, or conflicts of interest. This Agreement terminates immediately upon the death of the Contractor.");
   heading("4. Instrumentalities/Tools/Supplies");
