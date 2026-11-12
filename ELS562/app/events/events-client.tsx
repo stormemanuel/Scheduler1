@@ -399,6 +399,7 @@ type AutomationDraft = Omit<TextAutomationSettingsRecord, "updated_at">;
 type AutomationReminderKey = "reminder_7_day" | "reminder_3_day" | "reminder_day_before" | "reminder_day_of" | "reminder_daily_after_first_day";
 type ManualReminderKey = "3_day" | "day_before" | "day_of" | "daily_after_first_day";
 type ReminderPlanPreviewRow = {
+  reminder_key: string;
   crew_id: string;
   crew_name: string;
   reminder_label: string;
@@ -411,6 +412,7 @@ type ReminderPlanPreviewRow = {
 };
 
 type ImmediateSchedulePreviewRow = {
+  reminder_key: string;
   crew_id: string;
   crew_name: string;
   phone?: string;
@@ -3409,6 +3411,8 @@ function EventsClientInner({
   const [manualReminderDayKey, setManualReminderDayKey] = useState<ManualReminderKey>("day_before");
   const [reminderPlanPreview, setReminderPlanPreview] = useState<ReminderPlanPreviewRow[]>([]);
   const [reminderPlanSummary, setReminderPlanSummary] = useState<{ future: number; overdue: number; skipped: number } | null>(null);
+  const [alreadySentPreviewItems, setAlreadySentPreviewItems] = useState<string[]>([]);
+  const [markingPreviewItem, setMarkingPreviewItem] = useState(false);
   const [combinedSchedulePreview, setCombinedSchedulePreview] = useState<ImmediateSchedulePreviewRow[]>([]);
   const [combinedScheduleSummary, setCombinedScheduleSummary] = useState<CombinedScheduleSummary | null>(null);
   const [resendCancelledSchedules, setResendCancelledSchedules] = useState(true);
@@ -4029,6 +4033,7 @@ function EventsClientInner({
     setShortcutPanelOpen(false);
     setCombinedSchedulePreview([]);
     setCombinedScheduleSummary(null);
+    setAlreadySentPreviewItems([]);
   }, [selectedShow?.id, eventDisplayMode]);
 
   useEffect(() => {
@@ -8272,10 +8277,11 @@ function EventsClientInner({
     setMsg({ kind: "success", text: safeText(data.message) || `${queued.length} reminders scheduled.` });
   }
 
-  async function previewCombinedScheduleAndReminders() {
+  async function previewCombinedScheduleAndReminders(exclusions = alreadySentPreviewItems) {
     if (!selectedShow) return;
     const data = await request("/api/text-automation", "POST", {
       action: "preview_combined_schedule_reminders",
+      already_sent_items: exclusions,
       show_id: selectedShow.id,
       additional_note: scheduleAdditionalNote.trim(),
       resend_cancelled: resendCancelledSchedules,
@@ -8290,10 +8296,31 @@ function EventsClientInner({
     setMsg({ kind: "success", text: safeText(data.message) || "Combined schedule and reminder preview loaded." });
   }
 
+  async function markPreviewItemAlreadySent(row: ImmediateSchedulePreviewRow | ReminderPlanPreviewRow) {
+    if (!selectedShow || markingPreviewItem) return;
+    setMarkingPreviewItem(true);
+    try {
+      const data = await request("/api/text-automation", "POST", {
+        action: "mark_combined_item_sent", show_id: selectedShow.id,
+        crew_id: row.crew_id, reminder_key: row.reminder_key,
+        settings: { ...automationDraft, show_id: selectedShow.id },
+        additional_note: scheduleAdditionalNote.trim(),
+      });
+      mergeQueuedTexts((data.queue || []) as TextMessageQueueRecord[]);
+      const exclusions = [...new Set([...alreadySentPreviewItems, `${row.crew_id}|${row.reminder_key}`])];
+      setAlreadySentPreviewItems(exclusions);
+      await previewCombinedScheduleAndReminders(exclusions);
+      setMsg({ kind: "success", text: `${row.crew_name}: marked already sent. This item will be skipped; no message was sent.` });
+    } catch (error) {
+      setMsg({ kind: "error", text: error instanceof Error ? error.message : "Could not mark item already sent." });
+    } finally { setMarkingPreviewItem(false); }
+  }
+
   async function sendCombinedScheduleAndReminders(includeOverdueNow = false) {
     if (!selectedShow) return;
     const data = await request("/api/text-automation", "POST", {
       action: "send_combined_schedule_reminders",
+      already_sent_items: alreadySentPreviewItems,
       show_id: selectedShow.id,
       include_overdue_now: includeOverdueNow,
       additional_note: scheduleAdditionalNote.trim(),
@@ -12960,8 +12987,8 @@ function EventsClientInner({
                     {combinedScheduleSummary.no_phone ? <div>{combinedScheduleSummary.no_phone} item{combinedScheduleSummary.no_phone === 1 ? "" : "s"} skipped because no valid {automationDraft.sending_method === "resend_email" ? "email" : "phone"} is saved.</div> : null}
                   </div>
                   <div className="toolbar" style={{ marginTop: 10 }}>
-                    <button type="button" className="primary" onClick={() => void sendCombinedScheduleAndReminders(false)} disabled={saving || (!combinedScheduleSummary.schedules_now && !combinedScheduleSummary.future)}>{automationDraft.sending_method === "resend_email" ? "Confirm sending schedules and queuing future reminders by email" : "Confirm sending schedules and queuing future reminders"}</button>
-                    <button type="button" className="ghost" onClick={() => void sendCombinedScheduleAndReminders(true)} disabled={saving || (!combinedScheduleSummary.schedules_now && !combinedScheduleSummary.future && !combinedScheduleSummary.overdue)}>{automationDraft.sending_method === "resend_email" ? "Confirm sending schedules and queuing future reminders by email including overdue now" : "Confirm sending schedules and queuing future reminders including overdue now"}</button>
+                    <button type="button" className="primary" onClick={() => void sendCombinedScheduleAndReminders(false)} disabled={saving || markingPreviewItem || (!combinedScheduleSummary.schedules_now && !combinedScheduleSummary.future)}>{automationDraft.sending_method === "resend_email" ? "Confirm sending schedules and queuing future reminders by email" : "Confirm sending schedules and queuing future reminders"}</button>
+                    <button type="button" className="ghost" onClick={() => void sendCombinedScheduleAndReminders(true)} disabled={saving || markingPreviewItem || (!combinedScheduleSummary.schedules_now && !combinedScheduleSummary.future && !combinedScheduleSummary.overdue)}>{automationDraft.sending_method === "resend_email" ? "Confirm sending schedules and queuing future reminders by email including overdue now" : "Confirm sending schedules and queuing future reminders including overdue now"}</button>
                     <button type="button" className="ghost" onClick={() => { setCombinedSchedulePreview([]); setCombinedScheduleSummary(null); }}>Cancel</button>
                   </div>
                 </div>
@@ -12975,28 +13002,31 @@ function EventsClientInner({
                         <th>Item</th>
                         <th>Due</th>
                         <th>Result</th>
+                        <th>Already sent?</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {combinedSchedulePreview.slice(0, 30).map((row) => (
+                      {combinedSchedulePreview.map((row) => (
                         <tr key={`schedule-${row.crew_id}`}>
                           <td>{row.crew_name}</td>
                           <td>Full-show schedule</td>
                           <td>{row.scheduled_local}</td>
                           <td>{row.result_label}</td>
+                          <td>{row.result === "already_sent" ? <span className="badge">Already sent · skipped</span> : <button type="button" className="ghost" disabled={saving || markingPreviewItem} onClick={() => void markPreviewItemAlreadySent(row)}>Mark already sent</button>}</td>
                         </tr>
                       ))}
-                      {reminderPlanPreview.slice(0, 50).map((row, index) => (
+                      {reminderPlanPreview.map((row, index) => (
                         <tr key={`combined-reminder-${row.crew_id}-${row.reminder_label}-${row.labor_date}-${index}`}>
                           <td>{row.crew_name}</td>
                           <td>{row.reminder_label}</td>
                           <td>{row.scheduled_local} <span className="muted">({row.timezone})</span></td>
                           <td>{row.result_label}</td>
+                          <td>{row.result === "already_sent" ? <span className="badge">Already sent · skipped</span> : <button type="button" className="ghost" disabled={saving || markingPreviewItem} onClick={() => void markPreviewItemAlreadySent(row)}>Mark already sent</button>}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {combinedSchedulePreview.length + reminderPlanPreview.length > 80 ? <div className="small muted" style={{ marginTop: 6 }}>Showing first 80 combined preview rows.</div> : null}
+                  <div className="small muted" style={{ marginTop: 6 }}>Mark individual items you already sent outside this queue. This saves their sent status and excludes them from this batch. Other reminders stay unchanged.</div>
                 </div>
               ) : null}
             </div>

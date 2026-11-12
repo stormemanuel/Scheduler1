@@ -1846,6 +1846,35 @@ function queueRowsFromImmediateSchedulePlan(showId: string, plan: ImmediateSched
   })), user, deliveryModeOverride);
 }
 
+async function markCombinedPlanItemSent(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  showId: string,
+  row: ImmediateSchedulePlanRow | ReminderPlanRow,
+  user: { id: string; email?: string | null; display_name?: string | null; messaging_mode?: string | null },
+  deliveryMode: QueueDeliveryMode,
+) {
+  const existing = await readExistingQueueRowsForPlanning(admin, showId, deliveryMode === "resend_email");
+  const matching = existing.filter(item => item.crew_id === row.crew_id && item.message_type === row.message_type
+    && (deliveryMode === "resend_email" ? item.delivery_mode === "resend_email" : item.delivery_mode !== "resend_email")
+    && (logicalReminderKey(item.reminder_key || "") === logicalReminderKey(row.reminder_key)
+      || (row.reminder_key === "full_show_schedule" && (item.reminder_key || "").startsWith("manual_7_day"))));
+  if (matching.some(item => item.status === "sending")) throw new Error("This message is currently being sent. Refresh its status before marking it already sent.");
+  const sentAt = new Date().toISOString();
+  const ids = matching.filter(item => item.status !== "sent").map(item => item.id).filter(Boolean);
+  if (ids.length) {
+    const update = await admin.from("text_message_queue").update({ status: "sent", sent_at: sentAt, error: "Marked already sent manually from batch preview." }).eq("show_id", showId).in("id", ids).neq("status", "sending");
+    if (update.error) throw new Error(update.error.message);
+  }
+  const saved = await upsertTextQueueRows(admin, stampRows([{
+    show_id: showId, crew_id: row.crew_id, crew_name: row.crew_name, phone: row.phone,
+    message_type: row.message_type, reminder_key: logicalReminderKey(row.reminder_key),
+    scheduled_for: row.scheduled_for, body: row.body, status: "sent", sent_at: sentAt,
+    error: "Marked already sent manually from batch preview.",
+  }], user, deliveryMode)) as unknown as QueueRow[];
+  for (const item of saved) await syncAssignmentChecklistFromSentMessage(admin, { ...item, sent_at: item.sent_at || sentAt });
+  return saved;
+}
+
 function combinedScheduleSummary(schedulePlan: ImmediateSchedulePlanRow[], reminderPlan: ReminderPlanRow[]) {
   const scheduleNow = schedulePlan.filter((row) => row.result === "will_queue" || row.result === "previously_cancelled").length;
   const future = reminderPlan.filter((row) => row.result === "will_schedule" || row.result === "previously_cancelled").length;
@@ -3551,7 +3580,7 @@ export async function POST(request: Request) {
           : `${data?.length || queueRows.length} updated schedule${(data?.length || queueRows.length) === 1 ? "" : "s"} queued with the update notice.${remindersRefreshed ? ` ${remindersRefreshed} future reminder${remindersRefreshed === 1 ? " was" : "s were"} refreshed with current times.` : ""}`,
       });
     }
-    if (action === "preview_combined_schedule_reminders" || action === "send_combined_schedule_reminders") {
+    if (["preview_combined_schedule_reminders", "send_combined_schedule_reminders", "mark_combined_item_sent"].includes(action)) {
       if (!showId) return NextResponse.json({ message: "show_id is required." }, { status: 400 });
       const settings = normalizeSettings(body.settings || {}, showId);
       const effectiveSettings = { ...settings, enabled: true, send_schedule: true };
@@ -3561,10 +3590,20 @@ export async function POST(request: Request) {
       const resendCancelled = body.resend_cancelled !== false;
       const resendSentSchedules = Boolean(body.resend_sent_schedules);
       const addUpdatedScheduleNotice = Boolean(body.updated_schedule_notice);
-      const [schedulePlan, reminderPlan] = await Promise.all([
+      let [schedulePlan, reminderPlan] = await Promise.all([
         buildImmediateFullShowSchedulePlan(admin, effectiveSettings, bundle, senderName, safeText(body.additional_note), { resendCancelled, resendSent: resendSentSchedules, updatedScheduleNotice: addUpdatedScheduleNotice }),
         buildFullShowReminderPlan(admin, effectiveSettings, bundle, senderName, { resendCancelled }),
       ]);
+      if (action === "mark_combined_item_sent") {
+        const item = [...schedulePlan, ...reminderPlan].find(row => row.crew_id === safeText(body.crew_id) && row.reminder_key === safeText(body.reminder_key));
+        if (!item) return NextResponse.json({ message: "This preview item changed. Refresh the preview before marking it sent." }, { status: 409 });
+        const queue = await markCombinedPlanItemSent(admin, showId, item, auth.user, deliveryModeForSettings(effectiveSettings, auth.user));
+        return NextResponse.json({ ok: true, queue, message: "Marked already sent. This item will be skipped; no message was sent." });
+      }
+      // Explicit exclusions from this preview take priority over the general resend option.
+      const alreadySentItems = new Set(cleanQueueIds(body.already_sent_items, 5000));
+      schedulePlan = schedulePlan.map(row => alreadySentItems.has(`${row.crew_id}|${row.reminder_key}`) ? { ...row, result: "already_sent" as const, result_label: "Already sent — skipped" } : row);
+      reminderPlan = reminderPlan.map(row => alreadySentItems.has(`${row.crew_id}|${row.reminder_key}`) ? { ...row, result: "already_sent" as const, result_label: "Already sent — skipped" } : row);
       const summary = combinedScheduleSummary(schedulePlan, reminderPlan);
       if (action === "preview_combined_schedule_reminders") {
         return NextResponse.json({
