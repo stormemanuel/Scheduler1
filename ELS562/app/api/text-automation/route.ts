@@ -1,3 +1,4 @@
+import { reminderSendBlockReason } from "@/lib/reminder-safety";
 import { availabilityDateRange, broadAvailabilityRate, broadAvailabilityMessage, broadAvailabilityEventLabel } from "@/lib/broad-availability";
 import { arrivalReminderTemplate, reconfirmSchedule } from "@/lib/reminder-stages";
 import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
@@ -1210,7 +1211,7 @@ function buildQueueRows(
           crew_name: item.crew.name || "Crew member",
           phone,
           message_type: reminder.messageType,
-          reminder_key: forceNow ? manualBatchKey : reminder.key,
+          reminder_key: `${forceNow ? manualBatchKey : reminder.key}_${item.firstCall?.day.labor_date.slice(0, 10) || "undated"}`,
           scheduled_for: forceNow ? nowIso : reminder.scheduledFor,
           status: "scheduled",
           body: (() => { const staged = reminder.key === "7_day" && !options.initialSchedule ? reconfirmSchedule(messageBody) : messageBody; return reminder.messageType === "schedule" && additionalNote ? `${staged}\n\n${additionalNote}` : staged; })(),
@@ -2570,7 +2571,7 @@ export async function revalidateActiveEventMessageQueue(
   const cleanShowIds = [...new Set(showIds.map(safeText).filter(Boolean))];
   let queueQuery = admin
     .from("text_message_queue")
-    .select("id, show_id, crew_id, message_type, reminder_key, scheduled_for, status, body, queued_by_name")
+    .select("id, show_id, crew_id, message_type, reminder_key, scheduled_for, status, body, queued_by_name, sent_at")
     .in("status", ACTIVE_QUEUE_STATUSES)
     .in("message_type", ["schedule", "reminder"])
     .limit(5000);
@@ -2582,7 +2583,7 @@ export async function revalidateActiveEventMessageQueue(
   const queueRows = (queueRes.data || []) as Array<{
     id: string; show_id: string; crew_id: string | null; message_type: string | null;
     reminder_key: string | null; scheduled_for: string | null; status: string | null;
-    body: string | null; queued_by_name: string | null;
+    body: string | null; queued_by_name: string | null; sent_at?: string | null;
   }>;
   if (!queueRows.length) return { checked: 0, refreshed: 0, cancelled: 0 };
 
@@ -2624,14 +2625,21 @@ export async function revalidateActiveEventMessageQueue(
       const crewAssignments = assignmentsByCrew.get(crewId) || [];
       const reminderDate = dateFromReminderKey(queued.reminder_key);
       const reminderFamily = standardReminderFamily(queued.reminder_key);
+      if (reminderFamily || safeText(queued.message_type).toLowerCase() === "reminder") {
+        const reason = reminderSendBlockReason(queued, settings.timezone);
+        if (reason) {
+          cancelled += await blockOutdatedQueueRows(admin, [id], reason);
+          continue;
+        }
+      }
       const hasCurrentDateAssignment = !reminderDate || crewAssignments.some((row) => row.day.labor_date.slice(0, 10) === reminderDate);
       const hasUpcomingAssignment = crewAssignments.some((row) => row.day.labor_date.slice(0, 10) >= today);
       // Reminders expire at the start of the FIRST assigned call on the reminder's
       // actual labor date, not at the end of the event or on the next labor day.
-      // Day-before reminders may be delayed into the morning of the shift, but
-      // must never be delivered once the call has begun.
-      if (safeText(queued.message_type).toLowerCase() === "reminder" && ["day_before", "day_of", "daily_after_first_day"].includes(reminderFamily)) {
-        const targetDate = reminderDate || crewAssignments.find((row) => row.day.labor_date.slice(0, 10) >= today)?.day.labor_date.slice(0, 10) || "";
+      // The delivery-day gate above also prevents yesterday's day-before
+      // reminder from becoming a day-of message.
+      if (safeText(queued.message_type).toLowerCase() === "reminder") {
+        const targetDate = reminderDate;
         const targetCalls = crewAssignments.filter((row) => row.day.labor_date.slice(0, 10) === targetDate);
         if (!targetCalls.length) {
           cancelled += await blockOutdatedQueueRows(admin, [id], `Expired reminder: no current assignment on ${targetDate || "the intended labor date"}.`);
@@ -2644,9 +2652,8 @@ export async function revalidateActiveEventMessageQueue(
           continue;
         }
       }
-      // Standard reminders are rebuilt below. Do not block one merely because
-      // its old dated key points at the day that was moved; the live plan will
-      // reschedule that same reminder to the contractor's current labor date.
+      // Keep each reminder bound to its original labor date. A moved shift
+      // needs a newly generated reminder, never an old row retargeted at send time.
       if (!crewId || !crewAssignments.length || (!reminderFamily && !hasCurrentDateAssignment) || !hasUpcomingAssignment) {
         const reason = !crewAssignments.length
           ? "Blocked before sending: this person is no longer assigned to this event."
@@ -2676,7 +2683,11 @@ export async function revalidateActiveEventMessageQueue(
           reminderBySender.set(senderName, planMap);
         }
         const senderPlan = reminderBySender.get(senderName);
-        const fresh = senderPlan?.get(`${crewId}|${key}`) || senderPlan?.get(`${crewId}|family:${reminderFamily}`);
+        const fresh = senderPlan?.get(`${crewId}|${key}`);
+        if (fresh?.result === "already_sent") {
+          cancelled += await blockOutdatedQueueRows(admin, [id], "Blocked duplicate reminder: this reminder has already been sent.");
+          continue;
+        }
         if (fresh) {
           nextBody = safeText(fresh.body);
           nextScheduledFor = safeText(fresh.scheduled_for);
@@ -2698,6 +2709,13 @@ export async function revalidateActiveEventMessageQueue(
         nextBody = safeText(queued.body);
       }
 
+      if (reminderFamily || messageType === "reminder") {
+        const reason = reminderSendBlockReason({ body: nextBody, scheduled_for: nextScheduledFor, reminder_key: nextReminderKey }, settings.timezone);
+        if (reason) {
+          cancelled += await blockOutdatedQueueRows(admin, [id], reason);
+          continue;
+        }
+      }
       if (!nextBody) {
         cancelled += await blockOutdatedQueueRows(admin, [id], "Blocked before sending: a current schedule/reminder could not be rebuilt from the live event.");
         continue;

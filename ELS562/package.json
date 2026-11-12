@@ -10,6 +10,7 @@
     "build:contract-pdf": "node scripts/build-contract-pdf.cjs",
     "test:area-display": "node tests/area-display.cjs",
     "test:contract-terms": "node tests/contract-terms.cjs",
+    "test:reminder-safety": "node tests/reminder-safety.cjs",
     "test:reminder-stages": "node tests/reminder-stages.cjs",
     "test:event-call-search": "node tests/event-call-search.cjs",
     "test:mobile-pdf": "node tests/mobile-pdf.cjs",

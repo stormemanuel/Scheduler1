@@ -1,3 +1,4 @@
+import { reminderSendBlockReason } from "@/lib/reminder-safety";
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 
@@ -166,7 +167,7 @@ function queueReminderDateKey(row: QueueRow) {
 function isReminderQueueRow(row: QueueRow) {
   const type = normalizeText(row.message_type);
   const key = normalizeText(row.reminder_key);
-  return type === "reminder" || ["3 day", "day before", "day of", "daily after first day"].some((part) => key.includes(part));
+  return type === "reminder" || ["7 day", "3 day", "day before", "day of", "daily after first day"].some((part) => key.includes(part));
 }
 
 function activeAssignmentStatus(status: string | null | undefined) {
@@ -182,7 +183,9 @@ function assignmentCallStartIso(day: ShortcutLaborDayRow, call: ShortcutSubCallR
 
 function reminderBodyCanMapToDate(row: QueueRow, laborDate: string) {
   const keyDate = queueReminderDateKey(row);
-  if (keyDate) return keyDate === laborDate;
+  if (keyDate && keyDate !== laborDate) return false;
+  // Seven-day reconfirmations contain the full schedule, rather than a single Call line.
+  if (keyDate && normalizeText(row.message_type) === "schedule") return true;
   const body = safeText(row.body).toLowerCase();
   const tokens = formatReminderDateTokens(laborDate).map((token) => token.toLowerCase());
   return !body || tokens.some((token) => body.includes(token));
@@ -191,11 +194,11 @@ function reminderBodyCanMapToDate(row: QueueRow, laborDate: string) {
 async function markQueueRowsExpired(admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>, rows: QueueRow[], reason: string) {
   const ids = rows.map((row) => safeText(row.id)).filter(Boolean);
   if (!ids.length) return;
-  const expiredPayload = { status: "expired", error: reason, sent_at: null };
+  const expiredPayload = { status: "expired", error: reason };
   const expired = await admin.from("text_message_queue").update(expiredPayload).in("id", ids);
   if (!expired.error) return;
   if (!isStatusConstraintError(expired.error.message)) throw new Error(expired.error.message);
-  const fallback = await admin.from("text_message_queue").update({ status: "cancelled", error: `Expired: ${reason}`, sent_at: null }).in("id", ids);
+  const fallback = await admin.from("text_message_queue").update({ status: "cancelled", error: `Expired: ${reason}` }).in("id", ids);
   if (fallback.error) throw new Error(fallback.error.message);
 }
 
@@ -504,7 +507,7 @@ async function recoverStaleSendingRows(admin: NonNullable<ReturnType<typeof crea
   const cutoff = new Date(Date.now() - SENDING_LEASE_MINUTES * 60 * 1000).toISOString();
   let query = admin
     .from("text_message_queue")
-    .update({ status: "scheduled", error: "Returned to queue after stale Shortcut claim.", claimed_at: null, claim_token: null })
+    .update({ status: "needs_sender_review", error: "Shortcut delivery was not acknowledged. Verify on the sending phone before retrying; automatic resend is blocked.", claimed_at: null, claim_token: null })
     .eq("status", "sending")
     .or(`claimed_at.is.null,claimed_at.lt.${cutoff}`);
   if (showIds.length) query = query.in("show_id", showIds);
@@ -579,7 +582,8 @@ async function filterValidEventQueueRows(
     const crewId = safeText(row.crew_id);
     const candidates = assignmentsByCrewShow.get(`${crewId}|${showId}`) || [];
     const timezone = timezoneByShow.get(showId) || "America/Chicago";
-    const valid = candidates.some(({ assignment, call, day }) => {
+    const blockedReason = reminderSendBlockReason(row, timezone);
+    const valid = !safeText(row.sent_at) && !blockedReason && candidates.some(({ assignment, call, day }) => {
       const laborDate = safeText(day.labor_date).slice(0, 10);
       const callStartIso = assignmentCallStartIso(day, call, assignment, timezone);
       const callStartMs = Date.parse(callStartIso);
