@@ -1,6 +1,6 @@
 "use client";
 
-import { CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
+import { CONTRACT_CONDUCT_TERMS, CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
 import { use, useCallback, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 
 type PageProps = {
@@ -1109,7 +1109,7 @@ function ContractAgreementSection({
         <h4>9. Confidential Information</h4>
         <p>Contractor shall not disclose, use, or exploit the Company’s proprietary information, trade secrets, client lists, or operational methods. Any breach of confidentiality may result in legal action, including injunctive relief.</p>
         <h4>10. Work Quality and Professionalism</h4>
-        <p>Contractor agrees to maintain a high standard of professionalism, including punctuality, appropriate attire, and respectful conduct toward clients and colleagues. Contractor must complete assignments professionally and in accordance with industry standards.</p>
+        <p>{CONTRACT_CONDUCT_TERMS}</p>
         <h4>11. Dispute Resolution & Arbitration</h4>
         <p>Any disputes arising under this Agreement shall be resolved through binding arbitration in New Orleans, Louisiana, in accordance with the Federal Arbitration Act. No class-action or collective arbitration shall be permitted. The prevailing party shall be entitled to recover reasonable attorney’s fees and costs.</p>
         <h4>12. Indemnification</h4>

@@ -12,6 +12,7 @@ function load(file){const exports={};vm.runInNewContext(transpile(fs.readFileSyn
  for(const statement of builder.body.statements){
   if(!ts.isExpressionStatement(statement)||!ts.isCallExpression(statement.expression))continue;
   const call=statement.expression,name=call.expression.getText(ast),arg=call.arguments[0];
+  if(name==='paragraph' && arg?.getText(ast)==='CONTRACT_CONDUCT_TERMS'){current.paragraphs.push(terms.CONTRACT_CONDUCT_TERMS);continue;}
   if(!arg||!ts.isStringLiteral(arg))continue;
   if(name==='heading'){
    if(arg.text.startsWith('APPENDIX A'))break;

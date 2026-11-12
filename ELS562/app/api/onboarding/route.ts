@@ -1,4 +1,4 @@
-import { CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
+import { CONTRACT_CONDUCT_TERMS, CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
 import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
 import { phoneForMessaging, phoneDigitsForMatch } from "@/lib/crew-types";
 import { NextResponse } from "next/server";
@@ -720,7 +720,7 @@ function buildSignedContractPdf(
   heading("9. Confidential Information");
   paragraph("Contractor shall not disclose, use, or exploit the Company's proprietary information, trade secrets, client lists, or operational methods. Any breach of confidentiality may result in legal action, including injunctive relief.");
   heading("10. Work Quality and Professionalism");
-  paragraph("Contractor agrees to maintain a high standard of professionalism, including punctuality, appropriate attire, and respectful conduct toward clients and colleagues. Contractor must complete assignments professionally and in accordance with industry standards.");
+  paragraph(CONTRACT_CONDUCT_TERMS);
   heading("11. Dispute Resolution & Arbitration");
   paragraph("Any disputes arising under this Agreement shall be resolved through binding arbitration in New Orleans, Louisiana, in accordance with the Federal Arbitration Act. No class-action or collective arbitration shall be permitted. The prevailing party shall be entitled to recover reasonable attorney's fees and costs.");
   heading("12. Indemnification");
