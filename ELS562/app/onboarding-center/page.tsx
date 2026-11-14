@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { PhotoPreview } from "@/lib/ui/photo-preview";
 import { openDocumentInApp } from "@/lib/export-documents";
 
 type ReviewRow = {
@@ -157,6 +158,7 @@ function InfoLine({ label, value }: { label: string; value: unknown }) {
 }
 
 export default function OnboardingCenterPage() {
+  const [photoPreview, setPhotoPreview] = useState<{ url: string; title: string } | null>(null);
   const [rows, setRows] = useState<ReviewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -384,6 +386,10 @@ export default function OnboardingCenterPage() {
       }
       const crewName = text(row.crew?.name) || "Crew member";
       const documentLabel = `${crewName} ${documentType.replace(/_/g, " ")}`;
+      if (result.viewer_kind === "image" || documentType === "profile_photo" || documentType === "work_photo") {
+        setPhotoPreview({ url: result.signed_url, title: documentLabel });
+        return;
+      }
       const returnPath = `${window.location.pathname}${window.location.search}`;
       openDocumentInApp(result.signed_url, documentLabel, returnPath, result.viewer_kind === "image" ? "image" : "document");
       return;
@@ -1181,6 +1187,7 @@ export default function OnboardingCenterPage() {
           </section>
         );
       })}
+      {photoPreview ? <PhotoPreview url={photoPreview.url} title={photoPreview.title} onClose={() => setPhotoPreview(null)} /> : null}
     </div>
   );
 }

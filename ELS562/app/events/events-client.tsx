@@ -1,5 +1,6 @@
 "use client";
 
+import { useScrollAnchor } from "@/lib/ui/use-scroll-anchor";
 import { areaDisplayLabel } from "@/lib/area-display";
 import { availabilityDateRange, broadAvailabilityMessage, broadAvailabilityEventLabel } from "@/lib/broad-availability";
 import { matchesEventCallSearch } from "@/lib/event-call-search";
@@ -3411,6 +3412,7 @@ function EventsClientInner({
   const [manualReminderDayKey, setManualReminderDayKey] = useState<ManualReminderKey>("day_before");
   const [reminderPlanPreview, setReminderPlanPreview] = useState<ReminderPlanPreviewRow[]>([]);
   const [reminderPlanSummary, setReminderPlanSummary] = useState<{ future: number; overdue: number; skipped: number } | null>(null);
+  const preserveScrollAnchor = useScrollAnchor();
   const [alreadySentPreviewItems, setAlreadySentPreviewItems] = useState<string[]>([]);
   const [markingPreviewItem, setMarkingPreviewItem] = useState(false);
   const [combinedSchedulePreview, setCombinedSchedulePreview] = useState<ImmediateSchedulePreviewRow[]>([]);
@@ -6936,7 +6938,7 @@ function EventsClientInner({
           </div>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 10, maxWidth: 620 }}>
             <span className="small muted">Recommended order: project-manager rating first, then business-client rating. 5★, 4★, 3★ come first; unrated crew stays neutral; 2★ and 1★ drop below unrated. Position matches are still marked.</span>
-            <button type="button" className="ghost" onClick={() => openCrewPickerForCall(call.id)}>Close</button>
+            <button type="button" className="ghost" onClick={(event) => { preserveScrollAnchor(event.currentTarget); openCrewPickerForCall(call.id); }}>Close</button>
           </div>
         </div>
         {matchingCrewAssignmentCalls.length > 1 ? (
@@ -7162,7 +7164,7 @@ function EventsClientInner({
             </div>
             <div className="toolbar">
               {item.openCount ? <span className="badge needs-booking-badge">⚠ Needs Booking · {item.openCount} open</span> : null}
-              {item.openCount ? <button type="button" className="primary" onClick={() => openCrewPickerForBookingCall(item.call.id)}>Add Crew</button> : null}
+              {item.openCount ? <button type="button" className="primary" onClick={(event) => { preserveScrollAnchor(event.currentTarget); openCrewPickerForBookingCall(item.call.id); }}>Add Crew</button> : null}
               {item.openCount ? <button type="button" className="ghost" onClick={() => openBookingAvailability(defaultOpenCrewAssignmentCallIds(item.call.id))}>Ask Availability</button> : null}
               {bookedCrew.length ? (
                 <button type="button" className="ghost" onClick={() => toggleBookingBookedCrew(item.call.id)}>
@@ -7345,7 +7347,7 @@ function EventsClientInner({
             {canEditSelectedEventDetails ? <button type="button" className="ghost" disabled={callIndex === callCount - 1 || saving} onClick={() => moveSubCallInDay(day.id, call.id, "down")}>Move down</button> : null}
             {canEditSelectedEventDetails ? <button type="button" className="ghost" onClick={() => void startEditCall(day.id, call)}>Edit</button> : null}
             {canEditSelectedEventDetails ? <button type="button" className="ghost" onClick={() => void startEditCall(day.id, call)}>Add Labor Days</button> : null}
-            <button type="button" className="ghost" onClick={() => openCrewPickerForCall(call.id)}>Add Crew</button>
+            <button type="button" className="ghost" onClick={(event) => { preserveScrollAnchor(event.currentTarget); openCrewPickerForCall(call.id); }}>Add Crew</button>
             {isReplacementRole(call.role_name) && callAssignments.some(({ assignment }) => !assignment.privacy_hidden && assignmentCountsAsFilled(assignment)) ? (
               <button type="button" className="ghost" aria-expanded={expandedAlternateCallId === call.id} onClick={() => setExpandedAlternateCallId((previous) => previous === call.id ? null : call.id)}>
                 {expandedAlternateCallId === call.id ? "Close Alternates" : "Alternates / Mark Used"}

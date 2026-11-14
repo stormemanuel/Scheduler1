@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, Fragment, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { useScrollAnchor } from "@/lib/ui/use-scroll-anchor";
 import CrewRatings from "./crew-ratings";
 import { useRouter } from "next/navigation";
 import { normalizePhoneForStorage, phoneDigitsForMatch } from "@/lib/crew-types";
@@ -1305,6 +1306,7 @@ function draftFromPastedContactForm(raw: string, cityPools: CityPoolRecord[], ci
 export default function CrewClient({ cityPools: initialCityPools, crewGroups: initialGroups, initialCrew, masterRates, initialRatings, appUsers, currentUserId, currentUserName, currentUserRole }: CrewClientProps) {
   const router = useRouter();
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const preserveScrollAnchor = useScrollAnchor();
   const [cityPools, setCityPools] = useState(initialCityPools);
   const [crewGroups, setCrewGroups] = useState(initialGroups);
   const [crewRecords, setCrewRecords] = useState(initialCrew);
@@ -3032,7 +3034,8 @@ export default function CrewClient({ cityPools: initialCityPools, crewGroups: in
                     key={pool.id}
                     type="button"
                     className="ghost"
-                    onClick={() => {
+                    onClick={(event) => {
+                      preserveScrollAnchor(event.currentTarget);
                       setSelectedCityId(pool.id);
                       setSelectedGroup(ALL_GROUPS);
                       setCitySearch("");
@@ -3051,7 +3054,8 @@ export default function CrewClient({ cityPools: initialCityPools, crewGroups: in
                 <button
                   type="button"
                   className="ghost"
-                  onClick={() => {
+                  onClick={(event) => {
+                    preserveScrollAnchor(event.currentTarget);
                     setSelectedCityId(UNASSIGNED_CITY);
                     setSelectedGroup(ALL_GROUPS);
                     setCitySearch("");
