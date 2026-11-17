@@ -8601,13 +8601,12 @@ function EventsClientInner({
       setMsg({ kind: "error", text: "Enter the event-wide invoice message first." });
       return;
     }
-    const scheduledLocal = `${localInputDate()}T${localInputTime(0)}:00`;
     const manualSettings = { ...automationDraft, show_id: selectedShow.id, enabled: true, send_schedule: true };
     const data = await request("/api/text-automation", "POST", {
       action: "queue_custom_message",
       show_id: selectedShow.id,
       event_wide: true,
-      scheduled_local: scheduledLocal,
+      send_now: true,
       body: eventInvoiceMessageBody,
       settings: manualSettings,
     });

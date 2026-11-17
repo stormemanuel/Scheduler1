@@ -17,6 +17,7 @@
     "test:mobile-scroll": "node tests/mobile-scroll.cjs",
     "test:mobile-pdf": "node tests/mobile-pdf.cjs",
     "test:schedule-locations": "node tests/schedule-locations.cjs",
+    "test:invoice-text-timing": "node tests/invoice-text-timing.cjs",
     "test:invoice-import": "node tests/invoice-import.cjs",
     "test:availability": "node tests/availability-client.cjs && node tests/availability-server.cjs",
     "test:updated-schedules": "node tests/updated-schedule.cjs",

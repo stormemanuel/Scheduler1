@@ -1910,7 +1910,7 @@ function buildCustomQueueRows(
   settings: AutomationSettings,
   bundle: Awaited<ReturnType<typeof fetchShowBundle>>,
   senderName: string,
-  options: { laborDayId?: string; eventWide?: boolean; subCallId?: string; subCallIds?: string[]; crewIds?: string[]; startTime?: string; endTime?: string; scheduledLocal?: string; body: string }
+  options: { laborDayId?: string; eventWide?: boolean; subCallId?: string; subCallIds?: string[]; crewIds?: string[]; startTime?: string; endTime?: string; scheduledLocal?: string; sendNow?: boolean; body: string }
 ) {
   const targetDayIds = options.eventWide
     ? new Set(bundle.days.map((day) => day.id))
@@ -1922,7 +1922,7 @@ function buildCustomQueueRows(
   const targetDayIdSet = new Set(targetCalls.map((call) => call.labor_day_id));
   const targetDays = bundle.days.filter((day) => targetDayIdSet.has(day.id));
   const rows: QueueRow[] = [];
-  const scheduledFor = scheduledLocalToUtcIso(options.scheduledLocal || "", settings.timezone);
+  const scheduledFor = options.sendNow ? new Date().toISOString() : scheduledLocalToUtcIso(options.scheduledLocal || "", settings.timezone);
   const batchScope = options.eventWide ? `event_${settings.show_id}` : safeText(options.laborDayId).slice(0, 8);
   const batchKey = `custom_${batchScope}_${new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14)}`;
   const targetAssignments = bundle.assignments.filter((assignment) => {
@@ -3719,6 +3719,7 @@ export async function POST(request: Request) {
         startTime: safeText(body.start_time),
         endTime: safeText(body.end_time),
         scheduledLocal: safeText(body.scheduled_local),
+        sendNow: body.send_now === true,
         body: customBody,
       }), auth.user);
       if (!queueRows.length) return NextResponse.json({ ok: true, settings: saved, queue: [], message: eventWide ? "No event-wide texts were queued. Check that this event has assigned crew with phone numbers." : "No custom texts were queued. Check that the selected day/sub-call/time has assigned crew with phone numbers." });
