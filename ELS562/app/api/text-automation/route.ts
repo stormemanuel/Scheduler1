@@ -1912,6 +1912,7 @@ function buildCustomQueueRows(
   senderName: string,
   options: { laborDayId?: string; eventWide?: boolean; subCallId?: string; subCallIds?: string[]; crewIds?: string[]; startTime?: string; endTime?: string; scheduledLocal?: string; sendNow?: boolean; body: string }
 ) {
+  if (options.crewIds && !options.crewIds.length) return [];
   const targetDayIds = options.eventWide
     ? new Set(bundle.days.map((day) => day.id))
     : new Set([options.laborDayId || ""].filter(Boolean));
@@ -3715,7 +3716,7 @@ export async function POST(request: Request) {
         eventWide,
         subCallId: safeText(body.sub_call_id),
         subCallIds: cleanQueueIds(body.sub_call_ids, 250),
-        crewIds: cleanQueueIds(body.crew_ids, 500),
+        crewIds: Array.isArray(body.crew_ids) ? cleanQueueIds(body.crew_ids, 500) : undefined,
         startTime: safeText(body.start_time),
         endTime: safeText(body.end_time),
         scheduledLocal: safeText(body.scheduled_local),

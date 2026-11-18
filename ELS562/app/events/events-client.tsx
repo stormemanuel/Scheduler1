@@ -3441,6 +3441,7 @@ function EventsClientInner({
   const [customCallMessageBody, setCustomCallMessageBody] = useState("");
   const [customCallMessageCrewIds, setCustomCallMessageCrewIds] = useState<string[]>([]);
   const [customCallMessageSending, setCustomCallMessageSending] = useState(false);
+  const [invoiceRecipientSelection, setInvoiceRecipientSelection] = useState<{ showId: string; ids: string[] } | null>(null);
   const [eventInvoiceMessageBody, setEventInvoiceMessageBody] = useState(defaultEventInvoiceMessage);
   const [linkedScheduleShowIds, setLinkedScheduleShowIds] = useState<string[]>([]);
   const [availabilityCandidateCity, setAvailabilityCandidateCity] = useState("");
@@ -4209,6 +4210,15 @@ function EventsClientInner({
   const crewById = useMemo(() => {
     return new Map(crewRecords.map((crew) => [crew.id, crew]));
   }, [crewRecords]);
+
+  const eventInvoiceRecipients = useMemo(() => {
+    if (!selectedShow) return [];
+    const dayIds = new Set(laborDays.filter(day => day.show_id === selectedShow.id).map(day => day.id));
+    const callIds = new Set(subCalls.filter(call => dayIds.has(call.labor_day_id)).map(call => call.id));
+    const crewIds = new Set(assignments.filter(assignment => callIds.has(assignment.sub_call_id) && !assignment.privacy_hidden && assignmentCountsAsFilled(assignment)).map(assignment => assignment.crew_id));
+    return [...crewIds].map(id => crewById.get(id)).filter((crew): crew is CrewRecord => Boolean(crew?.phone)).sort((a, b) => a.name.localeCompare(b.name));
+  }, [selectedShow?.id, laborDays, subCalls, assignments, crewById]);
+  const selectedInvoiceCrewIds = eventInvoiceRecipients.filter(crew => invoiceRecipientSelection?.showId !== selectedShow?.id || invoiceRecipientSelection.ids.includes(crew.id)).map(crew => crew.id);
 
   const assignmentsByCallId = useMemo(() => {
     const map = new Map<string, Array<{ assignment: AssignmentRecord; originalIndex: number }>>();
@@ -8601,11 +8611,16 @@ function EventsClientInner({
       setMsg({ kind: "error", text: "Enter the event-wide invoice message first." });
       return;
     }
+    if (!selectedInvoiceCrewIds.length) {
+      setMsg({ kind: "error", text: "Select at least one tech for the invoice message." });
+      return;
+    }
     const manualSettings = { ...automationDraft, show_id: selectedShow.id, enabled: true, send_schedule: true };
     const data = await request("/api/text-automation", "POST", {
       action: "queue_custom_message",
       show_id: selectedShow.id,
       event_wide: true,
+      crew_ids: selectedInvoiceCrewIds,
       send_now: true,
       body: eventInvoiceMessageBody,
       settings: manualSettings,
@@ -12399,8 +12414,7 @@ function EventsClientInner({
       .filter((assignment) => selectedShowCallIds.has(assignment.sub_call_id) && assignmentCountsAsFilled(assignment))
       .map((assignment) => assignment.crew_id)
       .filter(Boolean)));
-    const eventWideRecipientCount = selectedShowAssignedCrewIds
-      .filter((crewId) => Boolean(crewById.get(crewId)?.phone)).length;
+    const eventWideRecipientCount = selectedInvoiceCrewIds.length;
     const updatedScheduleCandidates = selectedShowAssignedCrewIds
       .map((crewId) => {
         const crew = crewById.get(crewId);
@@ -13319,19 +13333,33 @@ function EventsClientInner({
             <div className="card compact" style={{ boxShadow: "none", marginTop: 12 }}>
               <div className="row" style={{ alignItems: "flex-start" }}>
                 <div>
-                  <strong>Invoice request to everyone who worked this event</strong>
+                  <strong>Invoice request to selected techs</strong>
                   <div className="small muted">
-                    Queues one editable message to each assigned crew member on this event. Duplicate assignments are combined so each person only gets one text.
+                    Choose the techs who should receive this invoice request. Each selected tech gets one text, even if assigned to multiple shifts.
                   </div>
                 </div>
                 <span className="badge">{eventWideRecipientCount} recipient{eventWideRecipientCount === 1 ? "" : "s"}</span>
               </div>
+              <fieldset style={{ marginTop: 12, border: "1px solid #d9e2e5", borderRadius: 10, padding: 12 }}>
+                <legend>Recipients · {selectedInvoiceCrewIds.length} of {eventInvoiceRecipients.length} selected</legend>
+                <div className="toolbar" style={{ marginBottom: 10 }}>
+                  <button type="button" className="ghost" disabled={saving} onClick={() => setInvoiceRecipientSelection({ showId: selectedShow!.id, ids: eventInvoiceRecipients.map(crew => crew.id) })}>Select all techs</button>
+                  <button type="button" className="ghost" disabled={saving} onClick={() => setInvoiceRecipientSelection({ showId: selectedShow!.id, ids: [] })}>Clear selection</button>
+                </div>
+                <div style={{ maxHeight: 300, overflowY: "auto", display: "grid", gap: 8 }}>
+                  {eventInvoiceRecipients.map(crew => <label key={crew.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 8 }}>
+                    <input type="checkbox" checked={selectedInvoiceCrewIds.includes(crew.id)} disabled={saving} onChange={event => setInvoiceRecipientSelection({ showId: selectedShow!.id, ids: event.target.checked ? [...selectedInvoiceCrewIds, crew.id] : selectedInvoiceCrewIds.filter(id => id !== crew.id) })} />
+                    <span>{crew.name} <span className="small muted">{crew.phone}</span></span>
+                  </label>)}
+                </div>
+                {!eventInvoiceRecipients.length ? <div className="small muted">No assigned techs with phone numbers are available for this event.</div> : null}
+              </fieldset>
               <label className="field" style={{ marginTop: 10 }}>
-                <span>Event-wide message</span>
+                <span>Invoice message</span>
                 <textarea rows={5} value={eventInvoiceMessageBody} onChange={(event) => setEventInvoiceMessageBody(event.target.value)} />
               </label>
               <div className="toolbar">
-                <button type="button" className="primary" onClick={queueEventInvoiceMessage} disabled={saving || !selectedShow || !eventInvoiceMessageBody.trim() || !eventWideRecipientCount}>Queue invoice text to everyone</button>
+                <button type="button" className="primary" onClick={queueEventInvoiceMessage} disabled={saving || !selectedShow || !eventInvoiceMessageBody.trim() || !eventWideRecipientCount}>Queue invoice text to {selectedInvoiceCrewIds.length} selected tech{selectedInvoiceCrewIds.length === 1 ? "" : "s"}</button>
                 <button type="button" className="ghost" onClick={() => setEventInvoiceMessageBody(defaultEventInvoiceMessage)}>Reset default invoice message</button>
               </div>
               <div className="small muted" style={{ marginTop: 8 }}>
