@@ -1,3 +1,5 @@
+import { activeBookingHolds } from "@/lib/booking-holds";
+import { updateBookingHold, consumeBookingHoldsForCrew } from "@/lib/booking-holds-server";
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient, createSupabaseServerClient, findCrewAssignmentConflict } from "@/lib/supabase-server";
 import { normalizeRole } from "@/lib/auth";
@@ -98,16 +100,18 @@ function assignmentCountsAsFilled(status: string | null | undefined) {
   return !["no_show_replaced", "called_in_replacement_used", "cancelled", "canceled", "removed", "declined", "unavailable"].includes(text);
 }
 
-async function canAddToSubCall(admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>, subCallId: string, replacingAssignmentId: string | null) {
-  const callRes = await admin.from("sub_calls").select("id, crew_needed").eq("id", subCallId).maybeSingle();
+async function canAddToSubCall(admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>, subCallId: string, replacingAssignmentId: string | null, crewId = "") {
+  const callRes = await admin.from("sub_calls").select("id, crew_needed, notes").eq("id", subCallId).maybeSingle();
   if (callRes.error) throw callRes.error;
   const maxCrew = Math.max(0, Number((callRes.data as { crew_needed?: number | null } | null)?.crew_needed || 0));
   if (!maxCrew) return { ok: true, maxCrew, assignedCount: 0 };
 
-  const assignedRes = await admin.from("assignments").select("id, status").eq("sub_call_id", subCallId);
+  const assignedRes = await admin.from("assignments").select("id, crew_id, status").eq("sub_call_id", subCallId);
   if (assignedRes.error) throw assignedRes.error;
   const assignedCount = ((assignedRes.data ?? []) as Array<{ status?: string | null }>).filter((row) => assignmentCountsAsFilled(row.status)).length;
-  if (assignedCount < maxCrew) return { ok: true, maxCrew, assignedCount };
+  const bookedCrewIds = ((assignedRes.data || []) as Array<{crew_id: string; status: string}>).filter(row => assignmentCountsAsFilled(row.status)).map(row => row.crew_id);
+  const heldCount = activeBookingHolds(callRes.data?.notes, bookedCrewIds).filter(hold => hold.crew_id !== crewId).length;
+  if (assignedCount + heldCount < maxCrew) return { ok: true, maxCrew, assignedCount };
 
   if (replacingAssignmentId) {
     const replaceRes = await admin.from("assignments").select("id, sub_call_id").eq("id", replacingAssignmentId).eq("sub_call_id", subCallId).maybeSingle();
@@ -187,13 +191,22 @@ export async function POST(request: Request) {
   const requestedCoordinationOwnerName = String(body.coordination_owner_name || "").trim() || null;
   const requestedFeeWaived = Boolean(body.coordination_fee_waived);
   const requestedOverstaff = Boolean(body.allow_overstaff);
-  if (!subCallId || !crewId) {
+  const holdAction = ["booking_hold_add", "booking_hold_release"].includes(body.action);
+  if (!subCallId || (!crewId && !holdAction)) {
     return NextResponse.json({ message: "Sub-call and crew are required." }, { status: 400 });
   }
 
   const access = await subCallAccess(admin, auth.user.id, subCallId);
   if (!access.allowed) {
     return NextResponse.json({ message: "You can only add crew to sub-calls specifically assigned to you or shows shared with you." }, { status: 403 });
+  }
+  if (holdAction) {
+    try {
+      const call = await updateBookingHold(admin, subCallId, auth.user.id, access.ownerAdmin, body.action, crewId, String(body.hold_id || ""), String(body.respond_by || ""));
+      return NextResponse.json({ ok: true, call, message: body.action === "booking_hold_add" ? "Position held pending confirmation." : "Hold released." });
+    } catch (error) {
+      return NextResponse.json({ message: error instanceof Error ? error.message : "Could not save hold." }, { status: 400 });
+    }
   }
   let coordination_owner_user_id: string | null = null;
   let coordination_owner_name: string | null = null;
@@ -212,9 +225,9 @@ export async function POST(request: Request) {
     coordination_owner_name = access.coordinatorName;
   }
 
-  const capacity = await canAddToSubCall(admin, subCallId, replacingAssignmentId);
+  const capacity = await canAddToSubCall(admin, subCallId, replacingAssignmentId, crewId);
   if (!capacity.ok && !(access.ownerAdmin && requestedOverstaff)) {
-    return NextResponse.json({ message: `This subgroup is full. Max: ${capacity.maxCrew} / Filled: ${capacity.assignedCount}. Increase crew needed before adding more crew.` }, { status: 400 });
+    return NextResponse.json({ message: `This subgroup is full or reserved by holds. Release a hold before adding another tech. Max: ${capacity.maxCrew} / Filled: ${capacity.assignedCount}. Increase crew needed before adding more crew.` }, { status: 400 });
   }
 
   let replacementSourceAssignmentId: string | null = null;
@@ -287,7 +300,8 @@ export async function POST(request: Request) {
       await admin.from("assignments").delete().eq("id", data.id);
       return NextResponse.json({ message: verifyError instanceof Error ? verifyError.message : "Could not verify the saved crew assignment. The new assignment was rolled back." }, { status: 400 });
     }
-    return NextResponse.json({ ok: true, row: data, message: "Crew added to sub-call." });
+    const holdCleanup = await consumeBookingHoldsForCrew(admin, subCallId, crewId).then(call => ({ call, hold_cleanup_pending: false })).catch(() => ({ call: null, hold_cleanup_pending: true }));
+    return NextResponse.json({ ok: true, row: data, ...holdCleanup, message: "Crew added to sub-call." });
   }
 
   const existingFallback = await admin
@@ -323,5 +337,6 @@ export async function POST(request: Request) {
     await admin.from("assignments").delete().eq("id", data.id);
     return NextResponse.json({ message: verifyError instanceof Error ? verifyError.message : "Could not verify the saved crew assignment. The new assignment was rolled back." }, { status: 400 });
   }
-  return NextResponse.json({ ok: true, row: data, message: "Crew added to sub-call. Run the assignment order SQL to enable saved crew reordering." });
+  const holdCleanup = await consumeBookingHoldsForCrew(admin, subCallId, crewId).then(call => ({ call, hold_cleanup_pending: false })).catch(() => ({ call: null, hold_cleanup_pending: true }));
+  return NextResponse.json({ ok: true, row: data, ...holdCleanup, message: "Crew added to sub-call. Run the assignment order SQL to enable saved crew reordering." });
 }

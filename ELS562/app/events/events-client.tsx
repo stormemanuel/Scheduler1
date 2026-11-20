@@ -1,5 +1,6 @@
 "use client";
 
+import { activeBookingHolds, stripBookingHolds, type BookingHold } from "@/lib/booking-holds";
 import { useScrollAnchor } from "@/lib/ui/use-scroll-anchor";
 import { areaDisplayLabel, scheduleAreaSummary } from "@/lib/area-display";
 import { availabilityDateRange, broadAvailabilityMessage, broadAvailabilityEventLabel } from "@/lib/broad-availability";
@@ -2820,7 +2821,7 @@ function callMeetAtBooth(call: Pick<SubCallRecord, "notes"> | { notes?: string |
 }
 
 function visibleSubCallNotes(notes: string | null | undefined) {
-  return stripBoothNumberMarker(stripSubCallReferenceMarker(stripMeetAtBoothMarker(notes)));
+  return stripBookingHolds(stripBoothNumberMarker(stripSubCallReferenceMarker(stripMeetAtBoothMarker(notes))));
 }
 
 function callBoothMeetupLocation(call: Pick<SubCallRecord, "area" | "location" | "notes" | "booth_number" | "sub_call_reference_number"> | { area?: string | null; location?: string | null; notes?: string | null; booth_number?: string | null; sub_call_reference_number?: string | null }) {
@@ -3521,6 +3522,8 @@ function EventsClientInner({
   const eventSubCallSearchActive = Boolean(eventSubCallSearch.trim());
   useEffect(() => { setEventSubCallSearch(""); }, [selectedShowId]);
 
+  const [bookingHoldRespondBy, setBookingHoldRespondBy] = useState("");
+  const [bookingHoldBusy, setBookingHoldBusy] = useState(false);
   const [bookingFilter, setBookingFilter] = useState<BookingViewFilter>("needs");
   const [bookingFullyBookedExpanded, setBookingFullyBookedExpanded] = useState(false);
   const [expandedBookingBoothKeys, setExpandedBookingBoothKeys] = useState<string[]>([]);
@@ -5274,7 +5277,7 @@ function EventsClientInner({
     const map = new Map<string, {
       booth: string;
       key: string;
-      calls: Array<typeof displayCalls[number] & { bookedCount: number; requestedCount: number; openCount: number }>;
+      calls: Array<typeof displayCalls[number] & { bookedCount: number; requestedCount: number; openCount: number; holdCount: number; availableCount: number }>;
     }>();
     for (const item of displayCalls) {
       const booth = boothLabel(item.call.area);
@@ -5283,7 +5286,8 @@ function EventsClientInner({
       const requestedCount = Math.max(0, Number(item.call.crew_needed || 0));
       const openCount = Math.max(0, requestedCount - bookedCount);
       const section = map.get(key) || { booth, key, calls: [] };
-      section.calls.push({ ...item, bookedCount, requestedCount, openCount });
+      const holdCount = holdsForCall(item.call).length;
+      section.calls.push({ ...item, bookedCount, requestedCount, openCount, holdCount, availableCount: Math.max(0, openCount - holdCount) });
       map.set(key, section);
     }
     return [...map.values()]
@@ -5318,12 +5322,14 @@ function EventsClientInner({
     const requestedCount = bookingBoothSections.reduce((sum, section) => sum + section.requestedCount, 0);
     const bookedCount = bookingBoothSections.reduce((sum, section) => sum + section.bookedCount, 0);
     const openCount = bookingBoothSections.reduce((sum, section) => sum + section.openCount, 0);
+    const holdCount = bookingBoothSections.reduce((sum, section) => sum + section.calls.reduce((total, item) => total + item.holdCount, 0), 0);
     const boothsNeedCrew = bookingBoothSections.filter((section) => section.openCount > 0).length;
     const fullyBookedBooths = bookingBoothSections.filter((section) => section.fullyBooked).length;
-    return { requestedCount, bookedCount, openCount, boothsNeedCrew, fullyBookedBooths };
+    return { requestedCount, bookedCount, openCount, holdCount, boothsNeedCrew, fullyBookedBooths };
   }, [bookingBoothSections]);
 
   useEffect(() => {
+    setBookingHoldRespondBy("");
     setBookingFullyBookedExpanded(false);
     setExpandedBookingBoothKeys([]);
     setExpandedBookingCallIds([]);
@@ -6847,6 +6853,37 @@ function EventsClientInner({
     });
   }
 
+  function holdsForCall(call: SubCallRecord) {
+    return activeBookingHolds(call.notes, assignments.filter(item => item.sub_call_id === call.id && assignmentCountsAsFilled(item)).map(item => item.crew_id));
+  }
+
+  async function saveBookingHold(call: SubCallRecord, crewId: string, holdId = "") {
+    if (bookingHoldBusy) return;
+    setBookingHoldBusy(true);
+    try {
+      const data = await request("/api/assignments", "POST", { action: holdId ? "booking_hold_release" : "booking_hold_add", sub_call_id: call.id, crew_id: crewId, hold_id: holdId, respond_by: holdId ? "" : bookingHoldRespondBy });
+      setSubCalls(current => current.map(item => item.id === call.id ? { ...item, notes: data.call.notes || "" } : item));
+      setMsg({ kind: "success", text: holdId ? "Hold released. The position is open again." : "Position held pending confirmation. It will stay in Needs Crew." });
+    } catch { /* request displays the error */ }
+    finally { setBookingHoldBusy(false); }
+  }
+
+  async function confirmBookingHold(call: SubCallRecord, hold: BookingHold) {
+    if (bookingHoldBusy) return;
+    setBookingHoldBusy(true);
+    try {
+      let data = await request("/api/assignments", "POST", { sub_call_id: call.id, crew_id: hold.crew_id, status: "confirmed" });
+      if (data.row && !assignmentCountsAsFilled(sanitizeAssignment(data.row))) {
+        data = await request(`/api/assignments/${data.row.id}`, "PATCH", { status: "confirmed" });
+      }
+      if (data.row) setAssignments(current => mergeById(current, [sanitizeAssignment(data.row)]));
+      const cleared = await request("/api/assignments", "POST", { action: "booking_hold_release", sub_call_id: call.id, crew_id: hold.crew_id, hold_id: hold.id });
+      setSubCalls(current => current.map(item => item.id === call.id ? { ...item, notes: cleared.call.notes || "" } : item));
+      setMsg({ kind: "success", text: "Hold converted to a confirmed booking. No message was sent." });
+    } catch { /* A successful assignment remains booked even if hold cleanup must be retried. */ }
+    finally { setBookingHoldBusy(false); }
+  }
+
   function callCapacitySummary(call: SubCallRecord) {
     const filled = assignments.filter((assignment) => assignment.sub_call_id === call.id && assignmentCountsAsFilled(assignment)).length;
     const needed = Math.max(0, Number(call.crew_needed || 0));
@@ -6856,7 +6893,7 @@ function EventsClientInner({
   function defaultOpenCrewAssignmentCallIds(callId: string) {
     const openMatches = matchingCrewAssignmentCallIdsFor(callId).filter((targetId) => {
       const targetCall = subCallById.get(targetId);
-      return targetCall ? callCapacitySummary(targetCall).open > 0 : false;
+      return targetCall ? callCapacitySummary(targetCall).open > holdsForCall(targetCall).length : false;
     });
     return openMatches;
   }
@@ -6899,7 +6936,7 @@ function EventsClientInner({
   function scrollToNextOpenShift() {
     const firstOpenCallId = bookingBoothSections
       .flatMap((section) => section.calls)
-      .find((item) => item.openCount > 0)?.call.id;
+      .find((item) => item.availableCount > 0)?.call.id;
     if (!firstOpenCallId) {
       setMsg({ kind: "success", text: "No open staffing rows in Booking View." });
       return;
@@ -6934,6 +6971,7 @@ function EventsClientInner({
         <div className="row" style={{ alignItems: "flex-start" }}>
           <div>
             <strong>Add Crew</strong>
+            {eventDisplayMode === "booking" ? <label className="field" style={{ marginTop: 10 }}><span>Hold: respond by (optional)</span><input type="date" value={bookingHoldRespondBy} onChange={event => setBookingHoldRespondBy(event.target.value)} /><small className="muted">Holds below reserve one position on this shift only.</small></label> : null}
             <div className="small muted">{areaDisplayLabel(call.area, subCallBoothNumber(call))} • {call.role_name}</div>
             <div className="small muted">Pool filter: {eventPool || "All crew"}</div>
           </div>
@@ -7099,6 +7137,7 @@ function EventsClientInner({
                 )}
                 {matchesRole(crew, call.role_name) ? <div className="small">Suggested position match</div> : <div className="small muted">Available in this pool</div>}
               </div>
+              {eventDisplayMode === "booking" ? <button type="button" className="ghost" style={{ background: "#fef3c7", borderColor: "#d97706", color: "#92400e" }} disabled={saving || bookingHoldBusy || holdsForCall(call).some(hold => hold.crew_id === crew.id) || callCapacitySummary(call).filled + holdsForCall(call).length >= callCapacitySummary(call).needed} onClick={event => { preserveScrollAnchor(event.currentTarget); void saveBookingHold(call, crew.id); }}>Hold this shift</button> : null}
               <button type="button" className="ghost" disabled={Boolean(assigningCrewId) || addDisabled} title={fullTargetCallIds.length && !(canManageEventAccess && allowCrewOverstaff) ? "One or more selected subgroups are full. Increase Crew Needed, use Replacement mode, or enable overstaffing." : ""} onClick={() => addCrewToCall(crew.id)}>
                 {assigningCrewId === crew.id ? "Adding..." : crewReplaceSourceCrewId ? `Replace on ${targetCount} day${targetCount === 1 ? "" : "s"}` : `Add to ${targetCount} day${targetCount === 1 ? "" : "s"}`}
               </button>
@@ -7159,14 +7198,14 @@ function EventsClientInner({
               <strong>{formatFullDate(item.day.labor_date)}</strong>
               <div className="small muted">{formatTimeRange(item.call)} · {item.call.role_name || "Crew"}</div>
               <div className="small" style={{ marginTop: 4, fontWeight: 800, color: item.openCount ? "#b45309" : "#15803d" }}>
-                {item.openCount ? `${item.openCount} open · ${item.bookedCount}/${item.requestedCount || 0} booked` : `Fully Booked · ${item.bookedCount}/${item.requestedCount || 0} booked`}
+                {item.openCount ? `${item.availableCount} open · ${item.holdCount} on hold · ${item.bookedCount}/${item.requestedCount || 0} booked` : `Fully Booked · ${item.bookedCount}/${item.requestedCount || 0} booked`}
               </div>
               {callDetails ? <div className="small muted" style={{ marginTop: 4 }}>{callDetails}</div> : null}
             </div>
             <div className="toolbar">
-              {item.openCount ? <span className="badge needs-booking-badge">⚠ Needs Booking · {item.openCount} open</span> : null}
-              {item.openCount ? <button type="button" className="primary" onClick={(event) => { preserveScrollAnchor(event.currentTarget); openCrewPickerForBookingCall(item.call.id); }}>Add Crew</button> : null}
-              {item.openCount ? <button type="button" className="ghost" onClick={() => openBookingAvailability(defaultOpenCrewAssignmentCallIds(item.call.id))}>Ask Availability</button> : null}
+              {item.openCount ? <span className="badge needs-booking-badge">⚠ {item.availableCount} open · {item.holdCount} on hold</span> : null}
+              {item.availableCount ? <button type="button" className="primary" onClick={(event) => { preserveScrollAnchor(event.currentTarget); openCrewPickerForBookingCall(item.call.id); }}>Add Crew</button> : null}
+              {item.availableCount ? <button type="button" className="ghost" onClick={() => openBookingAvailability(defaultOpenCrewAssignmentCallIds(item.call.id))}>Ask Availability</button> : null}
               {bookedCrew.length ? (
                 <button type="button" className="ghost" onClick={() => toggleBookingBookedCrew(item.call.id)}>
                   {bookedExpanded ? "Hide Booked Crew" : `View Booked Crew (${bookedCrew.length})`}
@@ -7174,6 +7213,14 @@ function EventsClientInner({
               ) : null}
             </div>
           </div>
+          {holdsForCall(item.call).map(hold => {
+            const canManageHold = canManageEventAccess || hold.created_by === currentUserId;
+            const overdue = Boolean(hold.respond_by && hold.respond_by < localInputDate());
+            return <div key={hold.id} className="card compact" style={{ marginTop: 10, background: "#fef3c7", border: "2px solid #eab308", color: "#713f12" }}>
+              <div className="row"><div><strong>ON HOLD · {canManageHold ? crewById.get(hold.crew_id)?.name || "Crew member" : "Another coordinator's crew"}</strong><div className="small">Awaiting confirmation{hold.respond_by ? ` · Respond by ${formatFullDate(hold.respond_by)}${overdue ? " · RESPONSE OVERDUE" : ""}` : " · No response deadline set"}</div></div>
+              {canManageHold ? <div className="toolbar"><button type="button" className="primary" disabled={saving || bookingHoldBusy} onClick={() => void confirmBookingHold(item.call, hold)}>Confirm booking</button><button type="button" className="ghost" disabled={saving || bookingHoldBusy} onClick={() => void saveBookingHold(item.call, hold.crew_id, hold.id)}>Release hold</button></div> : null}</div>
+            </div>;
+          })}
           {bookedExpanded ? (
             <div className="card compact" style={{ marginTop: 10, boxShadow: "none", background: "#fbfcfd" }}>
               {bookedCrew.map(({ assignment, crew }) => (
@@ -7191,16 +7238,16 @@ function EventsClientInner({
 
     const renderNeedsSection = (section: BookingSection) => {
       const sectionCalls = section.calls.filter((item) => item.openCount > 0);
-      const openCallIds = section.calls.filter((item) => item.openCount > 0).map((item) => item.call.id);
+      const openCallIds = section.calls.filter((item) => item.availableCount > 0).map((item) => item.call.id);
       return (
         <div key={section.key} className="card compact" style={{ borderTop: "4px solid #f59e0b" }}>
           <div className="row" style={{ alignItems: "flex-start" }}>
             <div>
               <h3 style={{ margin: 0 }}>{displayAreaForCalls(section.booth, section.calls.map(item => item.call))}</h3>
-              <div className="small muted">{section.bookedCount}/{section.requestedCount || 0} booked · {section.openCount} open</div>
+              <div className="small muted">{section.bookedCount}/{section.requestedCount || 0} booked · {section.openCount} awaiting booking/confirmation</div>
             </div>
             <div className="toolbar">
-              <span className="badge needs-booking-badge">⚠ Needs Booking · {section.openCount} open</span>
+              <span className="badge needs-booking-badge">⚠ {section.openCount} unfilled, including holds</span>
               {openCallIds.length ? <button type="button" className="ghost" onClick={() => openBookingAvailability(openCallIds)}>Ask Availability</button> : null}
             </div>
           </div>
@@ -7255,12 +7302,12 @@ function EventsClientInner({
             </div>
             <div className="toolbar">
               <button type="button" className="primary" onClick={() => setEventDisplayMode("booth")}>Back to Booth View</button>
-              <button type="button" className="ghost" onClick={scrollToNextOpenShift} disabled={!bookingSummary.openCount}>Next Open Shift</button>
+              <button type="button" className="ghost" onClick={scrollToNextOpenShift} disabled={bookingSummary.openCount <= bookingSummary.holdCount}>Next Open Shift</button>
               <button type="button" className="ghost" disabled={!selectedShow} onClick={() => void refreshSelectedEventData(selectedShow?.id || null, { minAgeMs: 0, silent: false })}>Refresh staffing</button>
             </div>
           </div>
           <div className="toolbar" style={{ justifyContent: "flex-start", marginTop: 12 }}>
-            <span className={bookingSummary.openCount ? "badge danger" : "badge success"}>{bookingSummary.openCount} open position{bookingSummary.openCount === 1 ? "" : "s"}</span>
+            <span className={bookingSummary.openCount ? "badge danger" : "badge success"}>{Math.max(0, bookingSummary.openCount - bookingSummary.holdCount)} open · {bookingSummary.holdCount} on hold</span>
             <span className="badge">{bookingSummary.boothsNeedCrew} booth{bookingSummary.boothsNeedCrew === 1 ? "" : "s"} need crew</span>
             <span className="badge success">{bookingSummary.fullyBookedBooths} fully booked</span>
             <span className="badge">{bookingSummary.bookedCount}/{bookingSummary.requestedCount || 0} booked</span>
@@ -10990,6 +11037,7 @@ function EventsClientInner({
               coordination_fee_waived: Boolean(adminCoordinationOwnerId && waiveAdminCoordinationFee),
               allow_overstaff: Boolean(canManageEventAccess && allowCrewOverstaff),
             });
+            if (data?.call?.id) setSubCalls(current => current.map(call => call.id === data.call.id ? { ...call, notes: data.call.notes || "" } : call));
             if (data?.row) {
               effectiveAssignment = sanitizeAssignment(data.row as AssignmentRecord);
               savedRows.push(effectiveAssignment);

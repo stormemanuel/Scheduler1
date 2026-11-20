@@ -1,3 +1,4 @@
+import { notesWithBookingHolds, readBookingHolds } from "@/lib/booking-holds";
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient, createSupabaseServerClient, findCrewAssignmentConflict, invalidateShowScheduleStatus, recordRemovedAssignmentsAndCancelQueue } from "@/lib/supabase-server";
 import { effectiveDayTypeFromTimes } from "@/lib/payroll-calculations";
@@ -345,7 +346,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     start_time: startTime,
     end_time: endTime,
     crew_needed: Math.max(1, Number(body.crew_needed || 1)),
-    notes: notesWithBoothNumberMarker(notesWithSubCallReferenceMarker(String(body.notes || '').trim(), String(body.sub_call_reference_number || '').trim()), String(body.booth_number || '').trim()),
+    notes: notesWithBookingHolds(notesWithBoothNumberMarker(notesWithSubCallReferenceMarker(String(body.notes || '').trim(), String(body.sub_call_reference_number || '').trim()), String(body.booth_number || '').trim()), readBookingHolds(existingSubCall?.notes)),
     sort_order: Math.max(0, Number(body.sort_order || 0)),
     day_type: savedDayTypeForTimes(body.day_type, startTime, endTime, oneHourWalkaway),
     one_hour_walkaway: oneHourWalkaway,
@@ -399,10 +400,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
   }
 
-  const { data, error } = await admin
-    .from('sub_calls')
-    .update(payload)
-    .eq('id', id)
+  let saveCall = admin.from('sub_calls').update(payload).eq('id', id);
+  saveCall = existingSubCall?.notes == null ? saveCall.is('notes', null) : saveCall.eq('notes', existingSubCall.notes);
+  const { data, error } = await saveCall
     .select('id,labor_day_id,area,location,po_number,sub_call_group_id,area_lead_contact_id,area_lead_name,area_lead_phone,assigned_coordinator_user_id,role_name,master_rate_id,message_rate,start_time,end_time,crew_needed,notes,sort_order,day_type,one_hour_walkaway')
     .single();
   if (error && error.message.includes('assigned_coordinator_user_id')) {
