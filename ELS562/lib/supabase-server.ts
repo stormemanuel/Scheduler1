@@ -1,3 +1,4 @@
+import { scheduleAreaSummary } from "@/lib/area-display";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
@@ -108,26 +109,21 @@ function scheduleBoothRepairNumber(call: { area?: string | null; notes?: string 
 function scheduleBoothRepairDateLabel(value: string) {
   const [year, month, day] = scheduleBoothRepairText(value).slice(0, 10).split("-").map(Number);
   if (!year || !month || !day) return scheduleBoothRepairText(value).slice(0, 10);
-  return `${month}/${day}/${year}`;
+  return `${month}/${day}/${String(year).slice(-2)}`;
 }
 
-function scheduleBoothRepairBody(body: string, boothLine: string) {
-  const cleanBody = scheduleBoothRepairText(body);
-  const cleanBoothLine = scheduleBoothRepairText(boothLine);
-  if (!cleanBody || !cleanBoothLine || /(^|\n)Booth\s*:/i.test(cleanBody)) return body;
-
-  if (/\nRate\s*:/i.test(body)) return body.replace(/\nRate\s*:/i, `\n${cleanBoothLine}\nRate:`);
-  if (/\nPO\s*:/i.test(body)) return body.replace(/\nPO\s*:/i, `\n${cleanBoothLine}\nPO:`);
-  if (/\nSchedule\s*:/i.test(body)) return body.replace(/\nSchedule\s*:/i, `\n${cleanBoothLine}\n\nSchedule:`);
-  return `${body.trimEnd()}\n\n${cleanBoothLine}`;
+function scheduleBoothRepairBody(body: string, areaLine: string) {
+  if (!body.trim() || !areaLine.trim()) return body;
+  // Only remove the standalone legacy field and its dated values. Inline
+  // "MERCK Booth: 2639", meeting points, and schedule rows remain intact.
+  let next = body.replace(/(?:^|\n)[ \t]*Booth[ \t]*:[^\n]*(?:\n[ \t]*\d{1,2}\/\d{1,2}(?:\/\d{2,4})?[ \t]*:[^\n]*)*/gi, "");
+  const areaSection = /(^|\n)[ \t]*Area[ \t]*:[^\n]*(?:\n[ \t]*\d{1,2}\/\d{1,2}(?:\/\d{2,4})?[ \t]*:[^\n]*)*/i;
+  if (areaSection.test(next)) return next.replace(areaSection, (_, prefix) => `${prefix}${areaLine}`);
+  if (/\nRate[ \t]*:/i.test(next)) return next.replace(/\nRate[ \t]*:/i, `\n${areaLine}\nRate:`);
+  return next;
 }
 
-/**
- * Backfills booth numbers into active schedule queue rows without changing the
- * queue identity, sender, due time, reminder key, or status. This is used both
- * by the queue UI and immediately before the iPhone Shortcut pulls due rows so
- * schedules created before booth-aware formatting are repaired in place.
- */
+/** Repair active schedule labels in place without changing delivery or queue state. */
 export async function repairActiveScheduleQueueBoothLines(
   admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
   showIds: string[],
@@ -161,7 +157,7 @@ export async function repairActiveScheduleQueueBoothLines(
     && scheduleBoothRepairText(row.show_id)
     && scheduleBoothRepairText(row.crew_id)
     && scheduleBoothRepairText(row.body)
-    && !/(^|\n)Booth\s*:/i.test(scheduleBoothRepairText(row.body))
+    && /(^|\n)Booth\s*:/i.test(scheduleBoothRepairText(row.body))
   );
   if (!repairableRows.length) return { reviewed: queueRows.length, updated: 0, bodies: {} as Record<string, string> };
 
@@ -201,7 +197,7 @@ export async function repairActiveScheduleQueueBoothLines(
 
   const dayById = new Map(days.map((day) => [scheduleBoothRepairText(day.id), day]));
   const callById = new Map(calls.map((call) => [scheduleBoothRepairText(call.id), call]));
-  const entriesByShowCrew = new Map<string, Array<{ date: string; booth: string }>>();
+  const entriesByShowCrew = new Map<string, Array<{ date: string; booth: string; area: string }>>();
   for (const assignment of assignments) {
     if (SCHEDULE_BOOTH_REPAIR_INACTIVE_ASSIGNMENT_STATUSES.has(scheduleBoothRepairStatus(assignment.status))) continue;
     const call = callById.get(scheduleBoothRepairText(assignment.sub_call_id));
@@ -210,36 +206,36 @@ export async function repairActiveScheduleQueueBoothLines(
     const crewId = scheduleBoothRepairText(assignment.crew_id);
     const booth = call ? scheduleBoothRepairNumber(call) : "";
     const laborDate = scheduleBoothRepairText(day?.labor_date).slice(0, 10);
-    if (!showId || !crewId || !booth) continue;
+    if (!showId || !crewId || !call) continue;
     const key = `${showId}:${crewId}`;
-    entriesByShowCrew.set(key, [...(entriesByShowCrew.get(key) || []), { date: laborDate, booth }]);
+    entriesByShowCrew.set(key, [...(entriesByShowCrew.get(key) || []), { date: laborDate, booth, area: call.area || "" }]);
   }
 
-  const boothLineFor = (showId: string, crewId: string) => {
+  const areaLineFor = (showId: string, crewId: string) => {
     const entries = (entriesByShowCrew.get(`${showId}:${crewId}`) || [])
       .sort((a, b) => a.date.localeCompare(b.date) || a.booth.localeCompare(b.booth));
     if (!entries.length) return "";
-    const uniqueBooths = Array.from(new Set(entries.map((entry) => entry.booth)));
-    if (uniqueBooths.length === 1) return `Booth: ${uniqueBooths[0]}`;
-    const dateLines = Array.from(new Set(entries.map((entry) => `${scheduleBoothRepairDateLabel(entry.date)}: ${entry.booth}`)));
-    return `Booth:\n${dateLines.join("\n")}`;
+    return scheduleAreaSummary(entries.map(entry => ({ dateLabel: scheduleBoothRepairDateLabel(entry.date), area: entry.area, booth: entry.booth })));
   };
 
   let updated = 0;
   const bodies: Record<string, string> = {};
   for (const row of repairableRows) {
-    const boothLine = boothLineFor(scheduleBoothRepairText(row.show_id), scheduleBoothRepairText(row.crew_id));
-    if (!boothLine) continue;
+    const areaLine = areaLineFor(scheduleBoothRepairText(row.show_id), scheduleBoothRepairText(row.crew_id));
+    if (!areaLine) continue;
     const currentBody = scheduleBoothRepairText(row.body);
-    const nextBody = scheduleBoothRepairBody(currentBody, boothLine);
+    const nextBody = scheduleBoothRepairBody(currentBody, areaLine);
     if (!nextBody || nextBody === currentBody) continue;
     const result = await admin
       .from("text_message_queue")
       .update({ body: nextBody })
       .eq("id", row.id)
+      .eq("body", row.body)
       .eq("message_type", "schedule")
-      .in("status", SCHEDULE_BOOTH_REPAIR_ACTIVE_STATUSES);
+      .in("status", SCHEDULE_BOOTH_REPAIR_ACTIVE_STATUSES)
+      .select("id");
     if (result.error) throw new Error(result.error.message);
+    if (!result.data?.length) continue;
     updated += 1;
     bodies[row.id] = nextBody;
   }

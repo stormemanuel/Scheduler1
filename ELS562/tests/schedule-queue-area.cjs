@@ -1,0 +1,24 @@
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict'),ts=require('typescript');
+const root=__dirname+'/..',js=source=>ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+const helpers={};vm.runInNewContext(js(fs.readFileSync(root+'/lib/area-display.ts','utf8')),{exports:helpers});
+const source=fs.readFileSync(root+'/lib/supabase-server.ts','utf8');
+const start=source.indexOf('const SCHEDULE_BOOTH_REPAIR_ACTIVE_STATUSES'),end=source.indexOf('const ASSIGNMENT_CONFLICT_INACTIVE_STATUSES');
+const body='Emanuel Labor Services Labor Call\nMeet-up Location: SANOFI Booth 2939\nPosition: LED Stagehand\nArea:\n12/9/26: MERCK Booth: 2639\n12/10/26: NMR LABOR\nBooth:\n12/9/2026: 2639\n12/10/2026: TBD\nRate: $35/hr\nPO: PO182595 / PO182319\n\nSchedule:\n12/9/26 - 8:00 AM–6:00 PM\n12/10/26 - 8:00 AM–6:00 PM\nPlease confirm.';
+const rows=[{id:'q',show_id:'show',crew_id:'crew',message_type:'schedule',status:'scheduled',body,scheduled_for:'2026-12-02T10:00:00Z',queued_by_user_id:'storm'},{id:'sent',show_id:'show',crew_id:'crew',message_type:'schedule',status:'sent',body},{id:'reminder',show_id:'show',crew_id:'crew',message_type:'reminder',status:'scheduled',body}];
+const days=[{id:'d1',show_id:'show',labor_date:'2026-12-09'},{id:'d2',show_id:'show',labor_date:'2026-12-10'}];
+const calls=[{id:'c1',labor_day_id:'d1',area:'MERCK RO328197',notes:'[[ELS_BOOTH_NUMBER:2639]]'},{id:'c2',labor_day_id:'d2',area:'NMR LABOR RO327893',notes:'[[ELS_BOOTH_NUMBER:TBD]]'}];
+const assignments=[{sub_call_id:'c1',crew_id:'crew',status:'confirmed'},{sub_call_id:'c2',crew_id:'crew',status:'confirmed'}];
+const admin={from(table){let patch;const filters=[];const q={select(){return q},limit(){return q},eq(field,value){filters.push(row=>row[field]===value);return q},in(field,values){filters.push(row=>values.includes(row[field]));return q},update(p){patch=p;return q},then(resolve,reject){let data=({text_message_queue:rows,labor_days:days,sub_calls:calls,assignments})[table].filter(row=>filters.every(f=>f(row)));if(patch)data.forEach(row=>Object.assign(row,patch));return Promise.resolve({data,error:null}).then(resolve,reject)}};return q}};
+const context=vm.createContext({...helpers,exports:{},admin});vm.runInContext(js(source.slice(start,end)),context);
+(async()=>{
+ const first=await vm.runInContext('repairActiveScheduleQueueBoothLines(admin,["show"])',context);
+ assert.equal(first.updated,1);assert.ok(!/^Booth:/m.test(rows[0].body));assert.ok(rows[0].body.includes('12/9/26: MERCK Booth: 2639'));assert.ok(rows[0].body.includes('12/10/26: NMR LABOR'));assert.ok(!rows[0].body.includes('RO328197'));assert.ok(rows[0].body.includes('Meet-up Location: SANOFI Booth 2939'));assert.ok(rows[0].body.includes('PO: PO182595 / PO182319'));
+ console.log('PASS queue refresh removes the screenshot duplicate while retaining combined areas, meetup and PO');
+ assert.equal(rows[0].status,'scheduled');assert.equal(rows[0].scheduled_for,'2026-12-02T10:00:00Z');assert.equal(rows[0].queued_by_user_id,'storm');assert.equal(rows[1].body,body);assert.equal(rows[2].body,body);
+ console.log('PASS repair preserves delivery, sender and status and leaves sent history and reminders untouched');
+ const second=await vm.runInContext('repairActiveScheduleQueueBoothLines(admin,["show"])',context);assert.equal(second.updated,0);assert.ok(!/^Booth:/m.test(rows[0].body));
+ console.log('PASS repeated refresh or Shortcut pull never adds a separate Booth block back');
+ rows[0].body=body.replace(/Booth:\n12\/9\/2026: 2639\n12\/10\/2026: TBD\n/,'');
+ const clean=await vm.runInContext('repairActiveScheduleQueueBoothLines(admin,["show"])',context);assert.equal(clean.updated,0);
+ console.log('PASS clean combined schedule stays unchanged in the legacy repair path');
+})().catch(e=>{console.error(e);process.exitCode=1});

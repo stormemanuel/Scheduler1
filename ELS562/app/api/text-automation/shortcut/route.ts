@@ -720,7 +720,7 @@ async function loadDueEventMessages(request: Request, admin: ReturnType<typeof c
   }
   let dueRows = (data || []) as QueueRow[];
   const boothRepairIds = dueRows
-    .filter((row) => safeText(row.message_type).toLowerCase() === "schedule" && !/(^|\n)Booth\s*:/i.test(safeText(row.body)))
+    .filter((row) => safeText(row.message_type).toLowerCase() === "schedule")
     .map((row) => safeText(row.id))
     .filter(Boolean);
   if (boothRepairIds.length) {
@@ -769,7 +769,7 @@ async function loadDueEventMessagesGlobal(request: Request, admin: ReturnType<ty
     throw new Error(error.message);
   }
   let dueRows = (data || []) as QueueRow[];
-  const boothRepairRows = dueRows.filter((row) => safeText(row.message_type).toLowerCase() === "schedule" && !/(^|\n)Booth\s*:/i.test(safeText(row.body)));
+  const boothRepairRows = dueRows.filter((row) => safeText(row.message_type).toLowerCase() === "schedule");
   const boothRepairIds = boothRepairRows.map((row) => safeText(row.id)).filter(Boolean);
   const boothRepairShowIds = Array.from(new Set(boothRepairRows.map((row) => safeText(row.show_id)).filter(Boolean)));
   if (boothRepairIds.length && boothRepairShowIds.length) {

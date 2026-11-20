@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "build:contract-pdf": "node scripts/build-contract-pdf.cjs",
+    "test:schedule-queue-area": "node tests/schedule-queue-area.cjs",
     "test:area-display": "node tests/area-display.cjs",
     "test:contract-terms": "node tests/contract-terms.cjs",
     "test:preview-already-sent": "node tests/preview-already-sent.cjs",
