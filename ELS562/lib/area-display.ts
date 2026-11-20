@@ -11,3 +11,10 @@ export function areaDisplayLabel(area: string | null | undefined, booth?: string
     .filter(value => value && !/^(TBD|N\/A|unknown)$/i.test(value)))];
   return booths.length ? `${name} · ${booths.length === 1 ? "Booth" : "Booths"} ${booths.join(" / ")}` : name;
 }
+
+/** One operational label per date; reference numbers remain internal. */
+export function scheduleAreaSummary(rows: Array<{ dateLabel: string; area: string | null; booth?: string | null }>) {
+  const labels = rows.map(row => ({ date: row.dateLabel, label: areaDisplayLabel(row.area, row.booth).replace(/ · Booths? /g, " Booth: ") }));
+  const unique = [...new Set(labels.map(row => row.label))];
+  return unique.length > 1 ? `Area:\n${[...new Set(labels.map(row => `${row.date}: ${row.label}`))].join("\n")}` : `Area: ${unique[0] || "Area TBD"}`;
+}

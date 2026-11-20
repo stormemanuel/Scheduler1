@@ -3,6 +3,7 @@ import { effectiveDayTypeFromTimes } from "@/lib/payroll-calculations";
 export type ImportedCrewRow = {
   area: string;
   boothNumber?: string;
+  roNumber?: string;
   poNumber?: string;
   eventName?: string;
   client?: string;
@@ -1682,8 +1683,16 @@ export function parseImportedEventFile(
   overrides: Partial<ImportedEventData["show"]>
 ): ImportedEventData {
   const lower = fileName.toLowerCase();
-  if (lower.endsWith(".csv")) return parseEstimateCsv(contents, overrides) || parseCsv(contents, overrides);
-  return parsePdfText(contents, overrides);
+  const parsed = lower.endsWith(".csv") ? parseEstimateCsv(contents, overrides) || parseCsv(contents, overrides) : parsePdfText(contents, overrides);
+  parsed.rows = parsed.rows.map(row => {
+    const reference = row.area.match(/\bRO\s*[:#-]?\s*\d+[A-Z0-9]*(?:[.-][A-Z0-9]+)*\b/i)?.[0];
+    return { ...row, roNumber: row.roNumber || (reference ? reference.replace(/\s|[:#]/g, "").toUpperCase() : ""), area: cleanImportedAreaName(row.area) };
+  });
+  return parsed;
+}
+
+function cleanImportedAreaName(value: string) {
+  return compactSpaces(value.replace(/\bRO\s*[:#-]?\s*\d+[A-Z0-9]*(?:[.-][A-Z0-9]+)*\b/gi, " ")).replace(/^[\s|,;–—-]+|[\s|,;–—-]+$/g, "") || "Imported Call";
 }
 
 export function buildImportedEventPayload(data: ImportedEventData) {
@@ -1730,9 +1739,10 @@ export function buildImportedEventPayload(data: ImportedEventData) {
       });
     }
 
-    const normalizedArea = cleanEstimateGroupArea(row.area || "Imported Call") || "Imported Call";
+    const roNumber = row.roNumber || row.area.match(/\bRO\s*\d+[A-Z0-9]*(?:[.-][A-Z0-9]+)*\b/i)?.[0]?.replace(/\s/g, "") || "";
+    const normalizedArea = cleanImportedAreaName(cleanEstimateGroupArea(row.area || "Imported Call"));
     const normalizedPosition = normalizeImportedRoleName(row.position);
-    const key = [row.date, normalizedArea, normalizedPosition, row.startTime, row.endTime, row.poNumber || "", row.boothNumber || ""].join("|");
+    const key = [row.date, normalizedArea, normalizedPosition, row.startTime, row.endTime, row.poNumber || "", row.boothNumber || "", roNumber].join("|");
     const existing = subCallGroups.get(key);
     if (existing) {
       existing.crew_needed += row.crewNeeded || 1;
@@ -1754,7 +1764,7 @@ export function buildImportedEventPayload(data: ImportedEventData) {
         notes: noteParts.join("\n"),
         po_number: row.poNumber || null,
         booth_number: row.boothNumber || null,
-        sub_call_reference_number: null,
+        sub_call_reference_number: roNumber || null,
         message_rate: row.clientRate != null ? String(row.clientRate) : null,
         day_type: effectiveDayTypeFromTimes(row.dayType || null, row.startTime, row.endTime),
         crewRows: [row],
@@ -1893,7 +1903,7 @@ export function runEstimateGroupHeaderSelfTest() {
     "Total $675.00",
   ].join("\n"), {});
   const jazzRows = roAreaParsed.rows.filter((row) => row.poNumber === "PO178023");
-  if (jazzRows.length !== 2 || jazzRows.some((row) => row.area !== "JAZZ RO328574" || row.boothNumber !== "TBD")) {
+  if (jazzRows.length !== 2 || jazzRows.some((row) => row.area !== "JAZZ" || row.roNumber !== "RO328574" || row.boothNumber !== "TBD")) {
     throw new Error("RO area regression did not preserve JAZZ with RO328574 on PO178023 rows.");
   }
 
@@ -2029,7 +2039,7 @@ export function runEstimateGroupHeaderSelfTest() {
   if (estimate1049Parsed.show.parsed_line_total !== 24800 || estimate1049Parsed.show.estimate_total !== 24800) {
     throw new Error(`Estimate 1049 regression totals were ${estimate1049Parsed.show.parsed_line_total} / ${estimate1049Parsed.show.estimate_total}, expected 24800.`);
   }
-  const estimate1049References = new Set(estimate1049Parsed.rows.map((row) => row.area.match(/RO\d+\.\d+/)?.[0] || ""));
+  const estimate1049References = new Set(estimate1049Parsed.rows.map((row) => row.roNumber || ""));
   for (const reference of ["RO328829.01", "RO328829.02", "RO328829.03", "RO328829.04"]) {
     if (!estimate1049References.has(reference)) throw new Error(`Estimate 1049 regression did not preserve ${reference}.`);
   }

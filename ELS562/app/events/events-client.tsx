@@ -1,7 +1,7 @@
 "use client";
 
 import { useScrollAnchor } from "@/lib/ui/use-scroll-anchor";
-import { areaDisplayLabel } from "@/lib/area-display";
+import { areaDisplayLabel, scheduleAreaSummary } from "@/lib/area-display";
 import { availabilityDateRange, broadAvailabilityMessage, broadAvailabilityEventLabel } from "@/lib/broad-availability";
 import { matchesEventCallSearch } from "@/lib/event-call-search";
 import { cleanAvailabilityMessage, formatAvailabilityGroups } from "@/lib/availability-message";
@@ -469,7 +469,6 @@ Meet-up Location: {meet_up_location}
 
 Position: {position}
 {area_line}
-{booth_line}
 Rate: {rate}
 {po_line}
 
@@ -611,9 +610,7 @@ function ensureScheduleTemplateDisclaimers(value: string) {
   if (!/\{area_line\}/i.test(text)) {
     text = text.replace(/(Position:\s*\{position\})/i, "$1\n{area_line}");
   }
-  if (!/\{booth_line\}/i.test(text)) {
-    text = text.replace(/(\{area_line\})/i, "$1\n{booth_line}");
-  }
+  text = text.replace(/[ \t]*\{booth_line\}\n?/gi, "");
   if (!/\{crew_lead_line\}/i.test(text)) {
     text = text.replace(/\n\nPlease confirm\./i, "\n\n{crew_lead_line}\n\nPlease confirm.");
   }
@@ -5364,14 +5361,8 @@ function EventsClientInner({
           : "Rate: Varies by call (see schedule)";
         const uniquePoNumbers = [...new Set(sortedCalls.map(({ call }) => safeText(call.po_number)).filter(Boolean))];
         const poLine = uniquePoNumbers.length ? `PO: ${uniquePoNumbers.join(" / ")}` : "";
-        const uniqueAreas = [...new Set(sortedCalls.map(({ call }) => boothLabel(call.area) || "Area TBD").filter(Boolean))];
-        const areaLine = uniqueAreas.length > 1
-          ? `Area:\n${[...new Set(sortedCalls.map(({ day, call }) => `${formatMessageDate(day.labor_date)}: ${boothLabel(call.area) || "Area TBD"}`))].join("\n")}`
-          : `Area: ${uniqueAreas.join(" / ") || "Area TBD"}`;
-        const uniqueBooths = [...new Set(sortedCalls.map(({ call }) => subCallBoothNumber(call)).filter(Boolean))];
-        const boothLine = uniqueBooths.length > 1
-          ? `Booth:\n${[...new Set(sortedCalls.filter(({ call }) => subCallBoothNumber(call)).map(({ day, call }) => `${formatMessageDate(day.labor_date)}: ${subCallBoothNumber(call)}`))].join("\n")}`
-          : uniqueBooths.length === 1 ? `Booth: ${uniqueBooths[0]}` : "";
+        const areaLine = scheduleAreaSummary(sortedCalls.map(({ day, call }) => ({ dateLabel: formatMessageDate(day.labor_date), area: call.area, booth: subCallBoothNumber(call) })));
+        const boothLine = "";
         const uniquePositions = [...new Set(sortedCalls.map(({ call }) => call.role_name || "Crew"))];
         const positionLine = uniquePositions.length === 1 ? uniquePositions[0] : uniquePositions.join(" / ");
         const replacementSummary = sortedCalls.some(({ call }) => isOnSiteReplacementRole(call.role_name)) ? onSiteReplacementSummary : "";

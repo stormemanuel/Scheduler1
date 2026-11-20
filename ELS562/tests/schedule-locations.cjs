@@ -2,6 +2,7 @@ const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('nod
 const root=path.resolve(__dirname,'..');
 const js=source=>ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 const exportsObject={};vm.runInNewContext(js(fs.readFileSync(path.join(root,'lib/schedule-locations.ts'),'utf8')),{exports:exportsObject});
+vm.runInNewContext(js(fs.readFileSync(path.join(root,'lib/area-display.ts'),'utf8')),{exports:exportsObject});
 const locations=exportsObject;
 const notesExports={};vm.runInNewContext(js(fs.readFileSync(path.join(root,'lib/schedule-notes.ts'),'utf8')),{exports:notesExports});
 const source=fs.readFileSync(path.join(root,'app/api/text-automation/route.ts'),'utf8');
@@ -61,4 +62,9 @@ check('server saved-template migration removes duplicate greeting before area re
 context.scheduleBoothNumber=()=> 'TBD';context.row={day:days[0],call:{...calls[0],location:'',area:'Booth TBD'},assignment:assignments[0],crew:crew[0]};
 check('unknown booth does not clutter reminder with Booth TBD',()=>assert.equal(vm.runInContext('valuesForSpecificCall(base,row,show)',context).booth_line,''));
 check('reminder details put Your Shift and date on one line with separated location details',()=>{const result=locations.formatReminderDetails('Hi Colin.\n\nCall: November 10 · 8:00 AM–6:00 PM\nLocation: PHOENIX — 100 NORTH THIRD STREET\nMeet-up: Lobby\nArea: NMR LABOR RO328063\n\nPlease reply confirmed.\n\nCoordinator: Storm Leigh');assert.ok(result.includes('Your Shift: November 10 · 8:00 AM–6:00 PM'));assert.equal(locations.formatReminderDetails(result.replace('Your Shift: ', 'Call:\n\n')),result);assert.ok(result.includes('\n\nLocation:'));assert.ok(result.includes('\n\nMeet-up:'));assert.ok(result.includes('\n\nArea:'));assert.ok(result.includes('Please bring a screwdriver and crescent wrench.\n\nPlease reply confirmed.'));assert.equal(locations.formatReminderDetails(result),result);});
+calls[0].area='MERCK RO328197';calls[0].booth_number='2639';calls[1].area='NMR LABOR RO327893';calls[1].booth_number='TBD';
+context.scheduleBoothNumber=call=>call.booth_number;
+clientContext.subCallBoothNumber=call=>call.booth_number;
+check('server queue uses combined dated area and booth with no RO or separate booth block',()=>{const values=run().get('crew').values;assert.ok(values.area_line.includes('2026-12-05: MERCK Booth: 2639'));assert.ok(values.area_line.includes('2026-12-07: NMR LABOR'));assert.ok(!values.area_line.includes('RO'));assert.equal(values.booth_line,'');assert.ok(!values.area.includes('RO'));});
+check('client copied schedule uses the same combined dated labels with no RO',()=>{vm.runInContext(js('var combinedAreaOutput=('+memo+')()'),clientContext);const text=vm.runInContext('combinedAreaOutput[0].text',clientContext);assert.ok(text.includes('2026-12-05: MERCK Booth: 2639'));assert.ok(text.includes('2026-12-07: NMR LABOR'));assert.ok(!/RO\d|^Booth:/m.test(text));});
 console.log(passed+' schedule location checks passed; no live messages sent.');

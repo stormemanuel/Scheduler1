@@ -1,3 +1,4 @@
+import { areaDisplayLabel, scheduleAreaSummary } from "@/lib/area-display";
 import { reminderSendBlockReason } from "@/lib/reminder-safety";
 import { availabilityDateRange, broadAvailabilityRate, broadAvailabilityMessage, broadAvailabilityEventLabel } from "@/lib/broad-availability";
 import { arrivalReminderTemplate, reconfirmSchedule } from "@/lib/reminder-stages";
@@ -881,7 +882,7 @@ const scheduleDateDisclaimer = "Dates and times are subject to change.";
 const updatedScheduleNotice = "*****UPDATED SCHEDULE PLEASE CONFIRM CHANGES*****";
 const scheduleLateHourlyDisclaimer = "If anyone is 15 minutes late or more, that shift will be paid hourly.";
 const onSiteReplacementSummary = "On-site Replacement: You must be onsite and at the listed meet-up location on time, ready to work. If you are not used, you will receive a flat $50 show-up payment. If you are used to replace a scheduled crew member, the $50 show-up payment is waived and you will be paid the rate for the shift and position you work.";
-const defaultScheduleTemplate = compactScheduleNotes(`Hi {first_name} – {show_name}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\n{booth_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`);
+const defaultScheduleTemplate = compactScheduleNotes(`Hi {first_name} – {show_name}\n\n{location}\n\nMeet-up Location: {meet_up_location}\n\nPosition: {position}\n{area_line}\nRate: {rate}\n{po_line}\n\nSchedule:\n{schedule}\n\n{replacement_summary}\n\n${scheduleDateDisclaimer}\n\n${scheduleLateHourlyDisclaimer}\n\nAttire: Black polo, black pants, and black shoes. Please arrive clean, well-groomed, and professionally presented.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services\n\n{project_manager_line}\n\n{crew_lead_line}\n\nPlease confirm.`);
 const defaultReminderTemplate = "Hi {first_name}, quick confirmation for {show_name}.\n\n{next_call_sentence}\n\n{meet_up_section}\n\n{booth_line}\n\nPlease bring a screwdriver and crescent wrench.\n\nPlease reply confirmed.\n\nCoordinator: {coordinator_name}\nEmanuel Labor Services";
 const defaultDayOfReminderTemplate = arrivalReminderTemplate;
 const defaultDailyAfterFirstDayTemplate = arrivalReminderTemplate;
@@ -925,9 +926,7 @@ function ensureScheduleTemplateDisclaimers(value: string) {
   if (!/\{area_line\}/i.test(text)) {
     text = text.replace(/(Position:\s*\{position\})/i, "$1\n{area_line}");
   }
-  if (!/\{booth_line\}/i.test(text)) {
-    text = text.replace(/(\{area_line\})/i, "$1\n{booth_line}");
-  }
+  text = text.replace(/[ \t]*\{booth_line\}\n?/gi, "");
   if (!/\{crew_lead_line\}/i.test(text)) {
     text = text.replace(/\n\nPlease confirm\./i, "\n\n{crew_lead_line}\n\nPlease confirm.");
   }
@@ -1028,14 +1027,8 @@ function nextScheduleByCrew(show: ShowRow, days: LaborDayRow[], calls: SubCallRo
         : "TBD";
     const uniquePoNumbers = [...new Set(item.poNumbers)];
     const poLine = uniquePoNumbers.length ? `PO: ${uniquePoNumbers.join(" / ")}` : "";
-    const uniqueAreas = [...new Set(item.areas)];
-    const areaLine = uniqueAreas.length > 1
-      ? `Area:\n${[...new Set(sortedLines.map((line) => `${line.dateLabel}: ${line.area}`))].join("\n")}`
-      : `Area: ${uniqueAreas.join(" / ") || "Area TBD"}`;
-    const uniqueBooths = [...new Set(item.booths)];
-    const boothLine = uniqueBooths.length > 1
-      ? `Booth:\n${[...new Set(sortedLines.filter((line) => line.booth).map((line) => `${line.dateLabel}: ${line.booth}`))].join("\n")}`
-      : uniqueBooths.length === 1 ? `Booth: ${uniqueBooths[0]}` : "";
+    const areaLine = scheduleAreaSummary(sortedLines);
+    const boothLine = "";
     const leadAssignment = assignments.find((assignment) => {
       const call = callById.get(assignment.sub_call_id);
       const role = normalizeRole(call?.role_name || "");
@@ -1080,7 +1073,7 @@ function nextScheduleByCrew(show: ShowRow, days: LaborDayRow[], calls: SubCallRo
       meet_up_sentence: meetUpValue ? ` Meet-up Location: ${meetUpValue}.` : "",
       meet_up_section: meetUpValue ? `Meet up here:\n${meetUpValue}` : "",
       position: positions,
-      area: uniqueAreas.join(" / ") || "",
+      area: [...new Set(sortedLines.map(line => areaDisplayLabel(line.area)))].join(" / "),
       area_line: areaLine,
       booth_line: boothLine,
       po_line: poLine,
@@ -1680,7 +1673,7 @@ async function buildSelectedDayReminderPlan(
       meet_up_location: "TBD onsite",
       meet_up_sentence: " Meet-up Location: TBD onsite.",
       position: row.call.role_name || "Crew",
-      area_line: `Area: ${safeText(row.call.area) || "Area TBD"}`,
+      area_line: scheduleAreaSummary([{ dateLabel: formatDate(row.day.labor_date), area: row.call.area, booth: scheduleBoothNumber(row.call) }]),
       booth_line: scheduleBoothNumber(row.call) ? `Booth: ${scheduleBoothNumber(row.call)}` : "",
       po_line: safeText(row.call.po_number) ? `PO: ${safeText(row.call.po_number)}` : "",
       crew_lead_line: "",

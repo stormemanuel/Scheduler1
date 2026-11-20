@@ -204,7 +204,7 @@ function normalizedDateOverlap(leftStart?: string | null, leftEnd?: string | nul
 }
 
 function normalizeArea(value: string | null | undefined) {
-  return normalizeMatchValue(value || "")
+  return normalizeMatchValue((value || "").replace(/\bRO\s*[:#-]?\s*\d+[A-Z0-9]*(?:[.-][A-Z0-9]+)*\b/gi, " "))
     .replace(/^area\s+/, "")
     .replace(/\bpo\s*[a-z0-9-]+\b/g, " ")
     .replace(/\bbooth\s*(?:number|no)?\s*[a-z0-9-]*\b/g, " ")
@@ -864,7 +864,7 @@ export async function buildImportComparison(admin: { from: (table: string) => an
     if (match.areaMatchStatus !== "matched" || !match.matchedAreaName) continue;
     for (const index of match.importedIndexes) {
       const call = payload.subCallGroups[index];
-      if (call) call.area = match.matchedAreaName;
+      if (call) call.area = match.matchedAreaName.replace(/\bRO\s*[:#-]?\s*\d+[A-Z0-9]*(?:[.-][A-Z0-9]+)*\b/gi, " ").replace(/\s+/g, " ").trim();
     }
   }
 

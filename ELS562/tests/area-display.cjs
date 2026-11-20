@@ -19,4 +19,15 @@ check('booth PDF and DOCX document headings use cleaned area and booth',()=>{ass
 context.eventDisplayMode='day';const daily=vm.runInContext('buildCrewListDocument()',context);
 check('day PDF and DOCX subgroup column uses cleaned area and booth',()=>{assert.equal(daily.sections[0].rows[0][1],'GENENTECH · Booth 439');assert.ok(daily.sections[0].subheading.includes('GENENTECH · Booth 439'));assert.ok(!JSON.stringify(daily.sections).includes('RO328498'));});
 check('export formatting never changes stored RO references',()=>assert.equal(call.area,'GENENTECH RO328498'));
+check('schedule combines dates, cleaned areas and booths without reference numbers',()=>{
+ const result=helpers.scheduleAreaSummary([
+  {dateLabel:'12/9',area:'MERCK RO328197',booth:'2639'},
+  {dateLabel:'12/10',area:'NMR LABOR RO327893',booth:'TBD'},
+  {dateLabel:'12/15',area:'MERCK RO328197',booth:'2639'},
+ ]);
+ assert.equal(result,'Area:\n12/9: MERCK Booth: 2639\n12/10: NMR LABOR\n12/15: MERCK Booth: 2639');
+ assert.ok(!result.includes('RO'));assert.ok(!result.includes('TBD'));
+});
+check('a booth change for the same area produces dated combined lines',()=>assert.equal(helpers.scheduleAreaSummary([{dateLabel:'12/9',area:'MERCK',booth:'2639'},{dateLabel:'12/10',area:'MERCK',booth:'2640'}]),'Area:\n12/9: MERCK Booth: 2639\n12/10: MERCK Booth: 2640'));
+check('one work area has a single combined label',()=>assert.equal(helpers.scheduleAreaSummary([{dateLabel:'12/9',area:'MERCK RO328197',booth:'2639'}]),'Area: MERCK Booth: 2639'));
 console.log(passed+' area-label checks passed.');

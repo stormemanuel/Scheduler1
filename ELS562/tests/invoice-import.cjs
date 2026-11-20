@@ -27,7 +27,13 @@ function check(name, fn) { fn(); passed++; console.log('PASS ' + name); }
   check('labor dates exclude invoice and payment dates', () => { assert.equal(parsed.show.show_start, '2026-12-05'); assert.equal(parsed.show.show_end, '2026-12-16'); });
   check('invoice totals exclude deposit and balance due', () => { assert.equal(parsed.show.estimate_total, 116475); assert.equal(parsed.show.parsed_line_total, 116475); });
   check('client and venue resolve from Bill to and Ship to', () => { assert.equal(parsed.show.client, 'NMR Events'); assert.match(parsed.show.venue, /Ernest Morial Convention Center/i); assert.equal(parsed.show.rate_city, 'New Orleans'); });
-  check('overnight shift and invoice rate preserved', () => { const row = parsed.rows.find(r => r.date === '2026-12-08' && r.startTime === '17:00'); assert.ok(row); assert.equal(row.endTime, '03:00'); assert.equal(row.crewNeeded, 3); assert.equal(row.clientRate, 575); assert.equal(row.amount, 1725); assert.equal(row.poNumber, 'PO174811'); assert.equal(row.boothNumber, '2939'); assert.match(row.area, /SANOFI.*RO327688/); });
+  check('import stores RO separately without changing area name or crew count', () => {
+    const calls = parser.buildImportedEventPayload(parsed).subCallGroups;
+    const sanofi = calls.filter(call => call.sub_call_reference_number === 'RO327688');
+    assert.ok(sanofi.length);assert.ok(sanofi.every(call => call.area === 'SANOFI'));
+    assert.ok(calls.every(call => !/\bRO\d/.test(call.area)));
+  });
+  check('overnight shift and invoice rate preserved', () => { const row = parsed.rows.find(r => r.date === '2026-12-08' && r.startTime === '17:00'); assert.ok(row); assert.equal(row.endTime, '03:00'); assert.equal(row.crewNeeded, 3); assert.equal(row.clientRate, 575); assert.equal(row.amount, 1725); assert.equal(row.poNumber, 'PO174811'); assert.equal(row.boothNumber, '2939'); assert.equal(row.area, "SANOFI"); assert.equal(row.roNumber, "RO327688"); });
   check('half-day qualifiers preserved', () => { const row = parsed.rows.find(r => /COGENT/.test(r.area) && r.date === '2026-12-14'); assert.equal(row.dayType, 'half_day'); assert.equal(row.clientRate, 250); });
   check('summary and zero-dollar headers never create labor', () => assert.ok(parsed.rows.every(row => row.date && row.amount > 0 && row.clientRate > 0 && row.name === '')));
   check('invoice number alone never becomes the event reference', () => { const sample = text.replace(/Event:\s*MCCNO\s*\|\s*ASH26/, 'Event: ASH26'); assert.equal(parser.parseImportedEventFile('invoice.pdf', sample, {}).show.show_reference_number, 'ASH26'); });
@@ -40,6 +46,10 @@ function check(name, fn) { fn(); passed++; console.log('PASS ' + name); }
   const admin = {from(table) { const query = {select(){return query},eq(){return query},order(){return query},in(){return query},then(resolve){resolve({data:table === 'labor_days'?days:calls,error:null})}};return query;}};
   const comparison = await server.buildImportComparison(admin,payload,{id:'ash',name:'ASH26',match_type:'selected_event',confidence:'strong'});
   check('invoice can compare against existing event without adding duplicate labor', () => { assert.equal(comparison.summary.newSubCalls,0); assert.equal(comparison.summary.newLaborDays,0); assert.equal(comparison.summary.removedLabor,0); });
+  const legacyCalls = calls.map(call => ({ ...call, area: [call.area, call.sub_call_reference_number].filter(Boolean).join(' ') }));
+  const legacyAdmin = {from(table) { const query = {select(){return query},eq(){return query},order(){return query},in(){return query},then(resolve){resolve({data:table === 'labor_days'?days:legacyCalls,error:null})}};return query;}};
+  const legacyComparison = await server.buildImportComparison(legacyAdmin, parser.buildImportedEventPayload(parsed), {id:'ash',name:'ASH26',match_type:'selected_event',confidence:'strong'});
+  check('clean area imports match existing RO-bearing names without duplicate shifts', () => { assert.equal(legacyComparison.summary.newSubCalls,0);assert.equal(legacyComparison.summary.removedLabor,0); });
   const changed = parser.buildImportedEventPayload(parser.parseImportedEventFile('invoice.pdf',text.replace('3 $575.00 $1,725.00','4 $575.00 $2,300.00'),{}));
   const update = await server.buildImportComparison(admin,changed,{id:'ash',name:'ASH26',match_type:'selected_event',confidence:'strong'});
   check('invoice updates identify crew-count changes for review', () => assert.equal(update.summary.crewCountIncreases,1));
