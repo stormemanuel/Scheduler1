@@ -6870,13 +6870,35 @@ function EventsClientInner({
 
   async function saveBookingHold(call: SubCallRecord, crewId: string, holdId = "") {
     if (bookingHoldBusy) return;
+    const targetIds = holdId ? [call.id] : [...new Set(crewAssignmentTargetCallIds)];
+    if (!targetIds.length) {
+      setMsg({ kind: "error", text: "Select at least one day/sub-call to hold for this crew member." });
+      return;
+    }
     setBookingHoldBusy(true);
+    let saved = 0;
+    let existing = 0;
+    const failed: string[] = [];
     try {
-      const data = await request("/api/assignments", "POST", { action: holdId ? "booking_hold_release" : "booking_hold_add", sub_call_id: call.id, crew_id: crewId, hold_id: holdId, respond_by: holdId ? "" : bookingHoldRespondBy });
-      setSubCalls(current => current.map(item => item.id === call.id ? { ...item, notes: data.call.notes || "" } : item));
-      setMsg({ kind: "success", text: holdId ? "Hold released. The position is open again." : "Position held pending confirmation. It will stay in Needs Crew." });
-    } catch { /* request displays the error */ }
-    finally { setBookingHoldBusy(false); }
+      for (const targetId of targetIds) {
+        const target = subCallById.get(targetId);
+        const label = laborDayById.get(target?.labor_day_id || "")?.labor_date || targetId;
+        if (!target) { failed.push(`${label}: shift no longer available`); continue; }
+        if (!holdId && (holdsForCall(target).some(hold => hold.crew_id === crewId) || assignments.some(assignment => assignment.sub_call_id === targetId && assignment.crew_id === crewId && assignmentCountsAsFilled(assignment)))) {
+          existing += 1;
+          continue;
+        }
+        try {
+          const data = await request("/api/assignments", "POST", { action: holdId ? "booking_hold_release" : "booking_hold_add", sub_call_id: targetId, crew_id: crewId, hold_id: holdId, respond_by: holdId ? "" : bookingHoldRespondBy });
+          setSubCalls(current => current.map(item => item.id === targetId ? { ...item, notes: data.call.notes || "" } : item));
+          saved += 1;
+        } catch (error) {
+          failed.push(`${label}: ${error instanceof Error ? error.message : "could not save hold"}`);
+        }
+      }
+      const summary = holdId ? (saved ? "Hold released. The position is open again." : "Hold could not be released.") : `${crewById.get(crewId)?.name || "Crew member"}: ${saved} hold${saved === 1 ? "" : "s"} saved on selected shifts. Holds stay in Needs Crew.`;
+      setMsg({ kind: failed.length ? "error" : "success", text: [summary, existing ? `${existing} selected shift${existing === 1 ? " is" : "s are"} already held or booked for this person.` : "", failed.length ? `${failed.length} did not save: ${failed.join("; ")}` : ""].filter(Boolean).join(" ") });
+    } finally { setBookingHoldBusy(false); }
   }
 
   async function confirmBookingHold(call: SubCallRecord, hold: BookingHold) {
@@ -6982,7 +7004,7 @@ function EventsClientInner({
         <div className="row" style={{ alignItems: "flex-start" }}>
           <div>
             <strong>Add Crew</strong>
-            {eventDisplayMode === "booking" ? <label className="field" style={{ marginTop: 10 }}><span>Hold: respond by (optional)</span><input type="date" value={bookingHoldRespondBy} onChange={event => setBookingHoldRespondBy(event.target.value)} /><small className="muted">Holds below reserve one position on this shift only.</small></label> : null}
+            {eventDisplayMode === "booking" ? <label className="field" style={{ marginTop: 10 }}><span>Hold: respond by (optional)</span><input type="date" value={bookingHoldRespondBy} onChange={event => setBookingHoldRespondBy(event.target.value)} /><small className="muted">Holds below reserve one position on each selected day for the same person.</small></label> : null}
             <div className="small muted">{areaDisplayLabel(call.area, subCallBoothNumber(call))} • {call.role_name}</div>
             <div className="small muted">Pool filter: {eventPool || "All crew"}</div>
           </div>
@@ -7128,6 +7150,14 @@ function EventsClientInner({
             });
             const addDisabled = !crewAssignmentTargetCallIds.length || (fullTargetCallIds.length > 0 && !(canManageEventAccess && allowCrewOverstaff));
             const targetCount = crewAssignmentTargetCallIds.length;
+            const holdDisabled = !targetCount || crewAssignmentTargetCallIds.every(id => {
+              const target = subCallById.get(id);
+              if (!target) return true;
+              const holds = holdsForCall(target);
+              return holds.some(hold => hold.crew_id === crew.id)
+                || assignments.some(assignment => assignment.sub_call_id === id && assignment.crew_id === crew.id && assignmentCountsAsFilled(assignment))
+                || callCapacitySummary(target).filled + holds.length >= callCapacitySummary(target).needed;
+            });
             const pmMedian = selectedShow?.client_contact_id
               ? medianRating(techRatings.filter((row) => row.client_contact_id === selectedShow.client_contact_id && row.crew_id === crew.id).map((row) => row.rating))
               : 0;
@@ -7148,8 +7178,8 @@ function EventsClientInner({
                 )}
                 {matchesRole(crew, call.role_name) ? <div className="small">Suggested position match</div> : <div className="small muted">Available in this pool</div>}
               </div>
-              {eventDisplayMode === "booking" ? <button type="button" className="ghost" style={{ background: "#fef3c7", borderColor: "#d97706", color: "#92400e" }} disabled={saving || bookingHoldBusy || holdsForCall(call).some(hold => hold.crew_id === crew.id) || callCapacitySummary(call).filled + holdsForCall(call).length >= callCapacitySummary(call).needed} onClick={event => { preserveScrollAnchor(event.currentTarget); void saveBookingHold(call, crew.id); }}>Hold this shift</button> : null}
-              <button type="button" className="ghost" disabled={Boolean(assigningCrewId) || addDisabled} title={fullTargetCallIds.length && !(canManageEventAccess && allowCrewOverstaff) ? "One or more selected subgroups are full. Increase Crew Needed, use Replacement mode, or enable overstaffing." : ""} onClick={() => addCrewToCall(crew.id)}>
+              {eventDisplayMode === "booking" ? <button type="button" className="ghost" style={{ background: "#fef3c7", borderColor: "#d97706", color: "#92400e" }} disabled={saving || bookingHoldBusy || Boolean(assigningCrewId) || holdDisabled} onClick={event => { preserveScrollAnchor(event.currentTarget); void saveBookingHold(call, crew.id); }}>Hold on {targetCount} day{targetCount === 1 ? "" : "s"}</button> : null}
+              <button type="button" className="ghost" disabled={Boolean(assigningCrewId) || bookingHoldBusy || addDisabled} title={fullTargetCallIds.length && !(canManageEventAccess && allowCrewOverstaff) ? "One or more selected subgroups are full. Increase Crew Needed, use Replacement mode, or enable overstaffing." : ""} onClick={() => addCrewToCall(crew.id)}>
                 {assigningCrewId === crew.id ? "Adding..." : crewReplaceSourceCrewId ? `Replace on ${targetCount} day${targetCount === 1 ? "" : "s"}` : `Add to ${targetCount} day${targetCount === 1 ? "" : "s"}`}
               </button>
             </div>
