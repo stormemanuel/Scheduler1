@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "build:contract-pdf": "node scripts/build-contract-pdf.cjs",
+    "test:send-schedules-browser": "node tests/send-schedules-browser.cjs",
     "test:booking-holds-browser": "node tests/booking-holds-browser.cjs",
     "test:booking-holds": "node tests/booking-holds.cjs",
     "test:schedule-queue-area": "node tests/schedule-queue-area.cjs",

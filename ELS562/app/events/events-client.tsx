@@ -2535,6 +2535,7 @@ function queueDueLabel(row: TextMessageQueueRecord) {
   if (row.status === "sending") return emailMode ? "Sending through Resend…" : "Claimed by Shortcut · waiting for sent/failed callback";
   if (!ACTIVE_TEXT_QUEUE_STATUSES.has(normalize(row.status))) return row.status;
   const scheduledFor = new Date(row.scheduled_for);
+  if (!Number.isFinite(Date.parse(safeText(row.scheduled_for)))) return "Invalid scheduled time · review needed";
   if (scheduledFor.getTime() <= Date.now()) return emailMode ? "Due now · sends automatically through Resend" : "Due now · sends on next Shortcut run";
   return emailMode ? `Email scheduled for ${scheduledFor.toLocaleString()}` : `Scheduled for ${scheduledFor.toLocaleString()}`;
 }
@@ -3419,6 +3420,8 @@ function EventsClientInner({
   const [resendSentSchedules, setResendSentSchedules] = useState(false);
   const [scheduleAdditionalNote, setScheduleAdditionalNote] = useState("");
   const [selectedScheduleCrewIds, setSelectedScheduleCrewIds] = useState<string[]>([]);
+  const [selectedSchedulePickerOpen, setSelectedSchedulePickerOpen] = useState(false);
+  const [updatedSchedulePickerOpen, setUpdatedSchedulePickerOpen] = useState(false);
   const [selectedSchedulePreview, setSelectedSchedulePreview] = useState<ImmediateSchedulePreviewRow[]>([]);
   const [selectedScheduleSummary, setSelectedScheduleSummary] = useState<CombinedScheduleSummary | null>(null);
   const [selectedScheduleSendState, setSelectedScheduleSendState] = useState<"idle" | "sending" | "sent">("idle");
@@ -3462,6 +3465,9 @@ function EventsClientInner({
   const [livePullClaim, setLivePullClaim] = useState<{ id: string; showId: string; crewName: string } | null>(null);
   const [selectedQueueIds, setSelectedQueueIds] = useState<string[]>([]);
   const [queueSenderTargetUserId, setQueueSenderTargetUserId] = useState(currentUserId || "");
+  const [queuePage, setQueuePage] = useState(0);
+  const [queueSearch, setQueueSearch] = useState("");
+  const [queueMessagePreviewId, setQueueMessagePreviewId] = useState<string | null>(null);
   const [queueEditRowId, setQueueEditRowId] = useState<string | null>(null);
   const [queueEditDrafts, setQueueEditDrafts] = useState<Record<string, { body: string; scheduled_for: string; status: string }>>({});
   const [crewRecords, setCrewRecords] = useState(() => initialCrew.map(sanitizeCrew).filter((crew) => crew.id));
@@ -4306,6 +4312,11 @@ function EventsClientInner({
     setSelectedQueueIds([]);
     setQueueEditRowId(null);
     setQueueEditDrafts({});
+    setQueuePage(0);
+    setQueueSearch("");
+    setQueueMessagePreviewId(null);
+    setSelectedSchedulePickerOpen(false);
+    setUpdatedSchedulePickerOpen(false);
   }, [selectedShow?.id]);
 
   const cancellationNoticeGroups = useMemo(() => {
@@ -12409,10 +12420,10 @@ function EventsClientInner({
     };
     const androidReadyRows = scheduledRows
       .filter((row) => isCurrentUserAndroidRow(row) && Date.parse(row.scheduled_for) <= nowMs && safeText(row.phone) && safeText(row.body))
-      .sort((a, b) => a.scheduled_for.localeCompare(b.scheduled_for));
+      .sort((a, b) => safeText(a.scheduled_for).localeCompare(safeText(b.scheduled_for)));
     const androidFutureRows = scheduledRows
       .filter((row) => isCurrentUserAndroidRow(row) && Date.parse(row.scheduled_for) > nowMs)
-      .sort((a, b) => a.scheduled_for.localeCompare(b.scheduled_for));
+      .sort((a, b) => safeText(a.scheduled_for).localeCompare(safeText(b.scheduled_for)));
     const legacyClaimableRows = selectedTextQueue.filter((row) => REPAIRABLE_TEXT_QUEUE_STATUSES.has(normalize(row.status)) && !safeText(row.queued_by_user_id));
     const legacyClaimableDueNow = legacyClaimableRows.filter((row) => Date.parse(row.scheduled_for) <= nowMs).length;
     const otherSenderDueNow = currentSenderId
@@ -12483,8 +12494,18 @@ function EventsClientInner({
     ];
     const nextScheduledText = selectedTextQueue
       .filter((row) => ACTIVE_TEXT_QUEUE_STATUSES.has(normalize(row.status)))
-      .sort((a, b) => a.scheduled_for.localeCompare(b.scheduled_for))[0] || null;
+      .sort((a, b) => safeText(a.scheduled_for).localeCompare(safeText(b.scheduled_for)))[0] || null;
     const adminQueueRows = [...selectedTextQueue].sort(queueRowSort);
+    const queueSearchText = queueSearch.trim().toLowerCase();
+    const matchingQueueRows = queueSearchText ? adminQueueRows.filter(row => [row.crew_name, row.phone, row.message_type, row.reminder_key, row.status].map(safeText).join(" ").toLowerCase().includes(queueSearchText)) : adminQueueRows;
+    const queuePageCount = Math.max(1, Math.ceil(matchingQueueRows.length / 25));
+    const currentQueuePage = Math.min(queuePage, queuePageCount - 1);
+    const visibleQueueRows = matchingQueueRows.slice(currentQueuePage * 25, (currentQueuePage + 1) * 25);
+    const renderQueuePages = () => <div className="row small" style={{ marginTop: 10, marginBottom: 10, gap: 10 }}>
+      <span>{matchingQueueRows.length ? `${currentQueuePage * 25 + 1}–${Math.min((currentQueuePage + 1) * 25, matchingQueueRows.length)} of ${matchingQueueRows.length} messages` : "No matching messages"}</span>
+      <div className="toolbar"><button type="button" className="ghost" disabled={currentQueuePage === 0} onClick={() => { setQueuePage(currentQueuePage - 1); setQueueMessagePreviewId(null); }}>Previous messages</button><span>Page {currentQueuePage + 1} of {queuePageCount}</span><button type="button" className="ghost" disabled={currentQueuePage + 1 >= queuePageCount} onClick={() => { setQueuePage(currentQueuePage + 1); setQueueMessagePreviewId(null); }}>Next messages</button></div>
+    </div>;
+
     const selectedQueueIdSet = new Set(selectedQueueIds);
     const selectableQueueRows = adminQueueRows.filter((row) => REPAIRABLE_TEXT_QUEUE_STATUSES.has(normalize(row.status)));
     const selectedQueueRows = adminQueueRows.filter((row) => selectedQueueIdSet.has(row.id));
@@ -13090,9 +13111,9 @@ function EventsClientInner({
                   <strong>Send schedule to selected techs</strong>
                   <div className="small muted">Send the current full-show schedule to one tech or any selected group without queuing future reminders and without adding the schedule-updated banner.</div>
                 </div>
-                <span className="badge">{selectedScheduleCrewIds.length} selected</span>
+                <div className="toolbar"><span className="badge">{selectedScheduleCrewIds.length} selected</span><button type="button" className="ghost" aria-expanded={selectedSchedulePickerOpen} onClick={() => setSelectedSchedulePickerOpen(open => !open)}>{selectedSchedulePickerOpen ? "Hide schedule recipients" : "Choose schedule recipients"}</button></div>
               </div>
-              {updatedScheduleCandidates.length ? (
+              {updatedScheduleCandidates.length && selectedSchedulePickerOpen ? (
                 <div className="list" style={{ marginTop: 10 }}>
                   <div className="toolbar">
                     <button type="button" className="ghost" onClick={() => setSelectedScheduleCrewIds(updatedScheduleCandidates.filter((item) => automationDraft.sending_method === "resend_email" ? item.hasEmail : item.hasPhone).map((item) => item.crewId))} disabled={!updatedScheduleCandidates.some((item) => automationDraft.sending_method === "resend_email" ? item.hasEmail : item.hasPhone)}>{automationDraft.sending_method === "resend_email" ? "Select all with emails" : "Select all with phones"}</button>
@@ -13159,7 +13180,7 @@ function EventsClientInner({
                   ) : null}
                 </div>
               ) : (
-                <p className="small muted" style={{ marginBottom: 0 }}>No assigned techs found for this event.</p>
+                <p className="small muted" style={{ marginBottom: 0 }}>{updatedScheduleCandidates.length ? "Open the recipient chooser to select techs." : "No assigned techs found for this event."}</p>
               )}
             </div>
             <div className="card compact accent-card" style={{ boxShadow: "none", marginTop: 12, background: "#f8fbff" }}>
@@ -13168,9 +13189,9 @@ function EventsClientInner({
                   <strong>Send updated schedule to selected techs</strong>
                   <div className="small muted">Use this when only certain techs had a schedule change. Selected techs receive the current full-show schedule with *****UPDATED SCHEDULE PLEASE CONFIRM CHANGES***** below the company heading.</div>
                 </div>
-                <span className="badge">{selectedUpdatedScheduleCrewIds.length} selected</span>
+                <div className="toolbar"><span className="badge">{selectedUpdatedScheduleCrewIds.length} selected</span><button type="button" className="ghost" aria-expanded={updatedSchedulePickerOpen} onClick={() => setUpdatedSchedulePickerOpen(open => !open)}>{updatedSchedulePickerOpen ? "Hide updated-schedule recipients" : "Choose updated-schedule recipients"}</button></div>
               </div>
-              {updatedScheduleCandidates.length ? (
+              {updatedScheduleCandidates.length && updatedSchedulePickerOpen ? (
                 <div className="list" style={{ marginTop: 10 }}>
                   <div className="toolbar">
                     <button type="button" className="ghost" onClick={() => setSelectedUpdatedScheduleCrewIds(updatedScheduleCandidates.filter((item) => automationDraft.sending_method === "resend_email" ? item.hasEmail : item.hasPhone).map((item) => item.crewId))} disabled={!updatedScheduleCandidates.some((item) => automationDraft.sending_method === "resend_email" ? item.hasEmail : item.hasPhone)}>{automationDraft.sending_method === "resend_email" ? "Select all with emails" : "Select all with phones"}</button>
@@ -13237,7 +13258,7 @@ function EventsClientInner({
                   ) : null}
                 </div>
               ) : (
-                <p className="small muted" style={{ marginBottom: 0 }}>No assigned techs found for this event.</p>
+                <p className="small muted" style={{ marginBottom: 0 }}>{updatedScheduleCandidates.length ? "Open the recipient chooser to select techs." : "No assigned techs found for this event."}</p>
               )}
             </div>
             <details className="card compact accent-card" style={{ boxShadow: "none", marginTop: 12 }}>
@@ -13630,14 +13651,17 @@ function EventsClientInner({
           ) : null}
           {selectedTextQueue.length ? (
             <div className="list" style={{ marginTop: 12 }}>
-              {adminQueueRows.map((row) => {
+              <label className="field"><span>Find queued texts</span><input value={queueSearch} onChange={event => { setQueueSearch(event.target.value); setQueuePage(0); setQueueMessagePreviewId(null); }} placeholder="Name, phone, stage, or status" /></label>
+              <div className="small muted">Totals and existing bulk selections include all queue pages.</div>
+              {renderQueuePages()}
+              {visibleQueueRows.map((row) => {
                 const rowStatus = normalize(row.status);
                 const selectable = REPAIRABLE_TEXT_QUEUE_STATUSES.has(rowStatus);
                 const selected = selectedQueueIdSet.has(row.id);
                 const editing = queueEditRowId === row.id;
                 const draft = queueEditDrafts[row.id] || { body: row.body || "", scheduled_for: localDateTimeInputValue(row.scheduled_for), status: rowStatus || "scheduled" };
                 return (
-                  <div key={row.id} className="card compact" style={{ padding: 10, background: selected ? "#fff8cf" : undefined }}>
+                  <div key={row.id} data-queue-row={row.id} className="card compact" style={{ padding: 10, background: selected ? "#fff8cf" : undefined }}>
                     <div className="row small" style={{ alignItems: "flex-start" }}>
                       <div className="row" style={{ alignItems: "flex-start", justifyContent: "flex-start", gap: 10 }}>
                         {canManageEventAccess ? (
@@ -13698,7 +13722,10 @@ function EventsClientInner({
                         </div>
                       </div>
                     ) : (
-                      <textarea readOnly rows={3} value={row.body || ""} style={{ width: "100%", marginTop: 8, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }} />
+                      <div style={{ marginTop: 8 }}>
+                        <button type="button" className="ghost" aria-expanded={queueMessagePreviewId === row.id} onClick={() => setQueueMessagePreviewId(current => current === row.id ? null : row.id)}>{queueMessagePreviewId === row.id ? "Hide message" : "Preview message"}</button>
+                        {queueMessagePreviewId === row.id ? <pre data-queue-message-preview={row.id} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{row.body || ""}</pre> : null}
+                      </div>
                     )}
                     <div className="toolbar" style={{ marginTop: 8 }}>
                       <button type="button" className="ghost" onClick={() => void copyText(row.body || "", `${row.crew_name || "Crew"} text`)}>Copy body</button>
@@ -13722,6 +13749,7 @@ function EventsClientInner({
                   </div>
                 );
               })}
+              {renderQueuePages()}
             </div>
           ) : (
             <p className="small muted" style={{ marginBottom: 0 }}>No texts are queued yet for this show.</p>
