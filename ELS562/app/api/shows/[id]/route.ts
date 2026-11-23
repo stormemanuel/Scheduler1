@@ -1,3 +1,4 @@
+import { notesWithCallNext, readCallNext } from "@/lib/call-next";
 import { NextResponse } from "next/server";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase-server";
@@ -996,12 +997,17 @@ async function createCoordinatorEventNotification(admin: ReturnType<typeof creat
   if (error && !coordinatorNotificationsMissing(error.message)) throw new Error(error.message);
 }
 
-async function updateShowWithSchemaFallback(admin: ReturnType<typeof createSupabaseAdminClient>, showId: string, payload: ShowUpdatePayload) {
+async function updateShowWithSchemaFallback(admin: ReturnType<typeof createSupabaseAdminClient>, showId: string, payload: ShowUpdatePayload, expectedNotes: string | null) {
   if (!admin) throw new Error("SUPABASE_SERVICE_ROLE_KEY is missing.");
   const workingPayload: Record<string, unknown> = { ...payload };
+  const save = () => {
+    let query = admin.from("shows").update(workingPayload).eq("id", showId);
+    query = expectedNotes == null ? query.is("notes", null) : query.eq("notes", expectedNotes);
+    return query.select("id");
+  };
 
   for (let attempt = 0; attempt < optionalShowColumns.length + 1; attempt += 1) {
-    const result = await admin.from("shows").update(workingPayload).eq("id", showId);
+    const result = await save();
     if (!result.error) return result;
 
     const missingColumn = missingShowColumnFromMessage(result.error.message);
@@ -1009,7 +1015,7 @@ async function updateShowWithSchemaFallback(admin: ReturnType<typeof createSupab
     delete workingPayload[missingColumn];
   }
 
-  return admin.from("shows").update(workingPayload).eq("id", showId);
+  return save();
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -1024,7 +1030,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const body = await request.json();
   const { data: existingShow } = await admin
     .from("shows")
-    .select("assigned_coordinator_user_id")
+    .select("assigned_coordinator_user_id, notes")
     .eq("id", id)
     .maybeSingle();
   const previousCoordinatorUserId = String((existingShow as { assigned_coordinator_user_id?: string | null } | null)?.assigned_coordinator_user_id || "");
@@ -1041,10 +1047,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     rate_city: String(body.rate_city || "Default").trim() || "Default",
     show_start: String(body.show_start || "").trim(),
     show_end: String(body.show_end || "").trim(),
-    notes: String(body.notes || "").trim() || null,
+    notes: notesWithCallNext(String(body.notes || "").trim(), readCallNext(existingShow?.notes)) || null,
   };
-  const { error } = await updateShowWithSchemaFallback(admin, id, payload);
+  const { error, data: savedShow } = await updateShowWithSchemaFallback(admin, id, payload, existingShow?.notes ?? null);
   if (error) return NextResponse.json({ message: error.message }, { status: 400 });
+
+  if (!savedShow?.length) return NextResponse.json({ message: "This event changed while saving. Refresh it before editing again." }, { status: 409 });
 
   // Keep previously saved show ratings tied to the current saved business client
   // and project manager/contact. If older schemas are missing those columns, do not block saving the event.

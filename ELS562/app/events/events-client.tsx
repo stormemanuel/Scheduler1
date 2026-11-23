@@ -1,5 +1,7 @@
 "use client";
 
+import { readCallNext, stripCallNext } from "@/lib/call-next";
+import { CallNextPanel } from "@/lib/ui/call-next-panel";
 import { activeBookingHolds, stripBookingHolds, type BookingHold } from "@/lib/booking-holds";
 import { useScrollAnchor } from "@/lib/ui/use-scroll-anchor";
 import { areaDisplayLabel, scheduleAreaSummary } from "@/lib/area-display";
@@ -2693,7 +2695,7 @@ function stripGeneratedEstimateImportNotes(value: string) {
 }
 
 function splitShowNotes(rawNotes: string | null | undefined) {
-  const raw = safeText(rawNotes);
+  const raw = stripCallNext(rawNotes);
   const result = { displayNotes: raw, meta: { ...defaultEventMessageMeta } };
   const start = raw.indexOf(EVENT_META_START);
   const end = raw.indexOf(EVENT_META_END);
@@ -3238,7 +3240,7 @@ function resolveEventPool(show: ShowRecord | null, crewRecords: CrewRecord[]) {
   if (!show) return null;
 
   const cities = [...new Set(crewRecords.flatMap((crew) => [crew.city_name, ...(crew.additional_city_pool_names ?? [])]).filter(Boolean))];
-  const haystack = normalize([show.rate_city, show.venue, show.notes, show.name].join(" "));
+  const haystack = normalize([show.rate_city, show.venue, stripCallNext(show.notes), show.name].join(" "));
 
   if (show.rate_city && normalize(show.rate_city) !== "default") {
     const exact = cities.find((city) => normalize(city) === normalize(show.rate_city));
@@ -3528,6 +3530,7 @@ function EventsClientInner({
   const eventSubCallSearchActive = Boolean(eventSubCallSearch.trim());
   useEffect(() => { setEventSubCallSearch(""); }, [selectedShowId]);
 
+  const [callNextBusy, setCallNextBusy] = useState(false);
   const [bookingHoldRespondBy, setBookingHoldRespondBy] = useState("");
   const [bookingHoldBusy, setBookingHoldBusy] = useState(false);
   const [bookingFilter, setBookingFilter] = useState<BookingViewFilter>("needs");
@@ -4216,6 +4219,9 @@ function EventsClientInner({
   const crewById = useMemo(() => {
     return new Map(crewRecords.map((crew) => [crew.id, crew]));
   }, [crewRecords]);
+
+  const canManageCallNext = canManageEventAccess || normalize(currentUserRole) === "coordinator";
+  const callNextEntries = useMemo(() => readCallNext(selectedShow?.notes).filter(entry => canManageEventAccess || entry.created_by === currentUserId), [selectedShow?.notes, canManageEventAccess, currentUserId]);
 
   const eventInvoiceRecipients = useMemo(() => {
     if (!selectedShow) return [];
@@ -6864,6 +6870,25 @@ function EventsClientInner({
     });
   }
 
+  async function updateCallNext(action: string, id = "", crewId = "", note = "") {
+    if (!selectedShow || callNextBusy) return;
+    setCallNextBusy(true);
+    try {
+      const data = await request("/api/events/call-next", "POST", { show_id: selectedShow.id, action, id, crew_id: crewId, note });
+      setShows(current => current.map(show => show.id === data.show.id ? { ...show, notes: data.show.notes || "" } : show));
+      setMsg({ kind: "success", text: action === "add" ? "Added to Call Next. No position was reserved and no message was sent." : action === "remove" ? "Removed from Call Next." : "Call Next updated." });
+    } catch { /* request displays the error */ }
+    finally { setCallNextBusy(false); }
+  }
+
+  function renderCallNextPanel(availability = false) {
+    if (!selectedShow || !canManageCallNext) return null;
+    const eligible = availability ? availabilityCandidates.filter(item => !item.bookingConflicts && !item.bookingUnknown).map(item => item.crew.id) : [];
+    return <CallNextPanel key={selectedShow.id} entries={callNextEntries} crew={crewRecords} busy={saving || callNextBusy} canManage={canManageCallNext} onAction={updateCallNext}
+      availabilitySelected={availability ? selectedAvailabilityCrewIds : undefined} availabilityEligible={eligible}
+      onAvailabilitySelect={availability ? (crewId, selected) => { setSelectedAvailabilityCrewIds(current => selected ? [...new Set([...current, crewId])] : current.filter(id => id !== crewId)); setAvailabilityPanelOpen(true); } : undefined} />;
+  }
+
   function holdsForCall(call: SubCallRecord) {
     return activeBookingHolds(call.notes, assignments.filter(item => item.sub_call_id === call.id && assignmentCountsAsFilled(item)).map(item => item.crew_id));
   }
@@ -7178,6 +7203,7 @@ function EventsClientInner({
                 )}
                 {matchesRole(crew, call.role_name) ? <div className="small">Suggested position match</div> : <div className="small muted">Available in this pool</div>}
               </div>
+              {eventDisplayMode === "booking" && canManageCallNext ? <button type="button" className="ghost" disabled={saving || callNextBusy || callNextEntries.some(entry => entry.crew_id === crew.id)} onClick={() => void updateCallNext("add", "", crew.id)}>{callNextEntries.some(entry => entry.crew_id === crew.id) ? "On Call Next" : "Call Next"}</button> : null}
               {eventDisplayMode === "booking" ? <button type="button" className="ghost" style={{ background: "#fef3c7", borderColor: "#d97706", color: "#92400e" }} disabled={saving || bookingHoldBusy || Boolean(assigningCrewId) || holdDisabled} onClick={event => { preserveScrollAnchor(event.currentTarget); void saveBookingHold(call, crew.id); }}>Hold on {targetCount} day{targetCount === 1 ? "" : "s"}</button> : null}
               <button type="button" className="ghost" disabled={Boolean(assigningCrewId) || bookingHoldBusy || addDisabled} title={fullTargetCallIds.length && !(canManageEventAccess && allowCrewOverstaff) ? "One or more selected subgroups are full. Increase Crew Needed, use Replacement mode, or enable overstaffing." : ""} onClick={() => addCrewToCall(crew.id)}>
                 {assigningCrewId === crew.id ? "Adding..." : crewReplaceSourceCrewId ? `Replace on ${targetCount} day${targetCount === 1 ? "" : "s"}` : `Add to ${targetCount} day${targetCount === 1 ? "" : "s"}`}
@@ -7361,6 +7387,8 @@ function EventsClientInner({
             ))}
           </div>
         </div>
+
+        {renderCallNextPanel()}
 
         {bookingSummary.openCount === 0 ? (
           <div className="card compact" style={{ background: "#f0fdf4", borderColor: "#86efac" }}>
@@ -12574,6 +12602,8 @@ function EventsClientInner({
               </div>
             </div>
 
+            {renderCallNextPanel(true)}
+
             {availabilityPanelOpen ? <>
             <div className="toolbar" style={{ marginTop: 10 }}>
               <button type="button" className="ghost" onClick={() => setAvailabilityPanelOpen(false)}>Hide crew availability</button>
@@ -12738,7 +12768,7 @@ function EventsClientInner({
                   ? `${item.rating.median.toFixed(1)} median · ${item.rating.count} rating${item.rating.count === 1 ? "" : "s"}${item.rating.source === "client" ? " · this client" : ""}`
                   : "Unrated";
                 return (
-                  <label key={item.crew.id} className="card compact" style={{ padding: 10, boxShadow: "none", cursor: "pointer", background: selected ? "#fff8cf" : "#fff" }}>
+                  <div key={item.crew.id} className="card compact" style={{ padding: 10, boxShadow: "none", background: selected ? "#fff8cf" : "#fff" }}><label style={{display:"block",cursor:"pointer"}}>
                     <div className="row" style={{ alignItems: "flex-start" }}>
                       <div className="row" style={{ justifyContent: "flex-start", alignItems: "flex-start", gap: 10 }}>
                         <input
@@ -12766,6 +12796,8 @@ function EventsClientInner({
                       </div>
                     </div>
                   </label>
+                  {canManageCallNext ? <div className="toolbar" style={{marginTop:6}}><button type="button" className="ghost" disabled={saving || callNextBusy || callNextEntries.some(entry => entry.crew_id === item.crew.id)} onClick={() => void updateCallNext("add", "", item.crew.id)}>{callNextEntries.some(entry => entry.crew_id === item.crew.id) ? "On Call Next" : "Add to Call Next"}</button></div> : null}
+                  </div>
                 );
               }) : <div className="small muted">No crew matched this city, position, and search. Choose All cities or broaden the search.</div>}
             </div>
