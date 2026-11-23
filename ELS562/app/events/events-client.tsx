@@ -3530,6 +3530,7 @@ function EventsClientInner({
   const eventSubCallSearchActive = Boolean(eventSubCallSearch.trim());
   useEffect(() => { setEventSubCallSearch(""); }, [selectedShowId]);
 
+  const [callNextAddRequest, setCallNextAddRequest] = useState(0);
   const [callNextBusy, setCallNextBusy] = useState(false);
   const [bookingHoldRespondBy, setBookingHoldRespondBy] = useState("");
   const [bookingHoldBusy, setBookingHoldBusy] = useState(false);
@@ -6884,7 +6885,7 @@ function EventsClientInner({
   function renderCallNextPanel(availability = false) {
     if (!selectedShow || !canManageCallNext) return null;
     const eligible = availability ? availabilityCandidates.filter(item => !item.bookingConflicts && !item.bookingUnknown).map(item => item.crew.id) : [];
-    return <CallNextPanel key={selectedShow.id} entries={callNextEntries} crew={crewRecords} busy={saving || callNextBusy} canManage={canManageCallNext} onAction={updateCallNext}
+    return <CallNextPanel key={selectedShow.id} entries={callNextEntries} crew={crewRecords} busy={saving || callNextBusy} canManage={canManageCallNext} onAction={updateCallNext} addRequest={callNextAddRequest}
       availabilitySelected={availability ? selectedAvailabilityCrewIds : undefined} availabilityEligible={eligible}
       onAvailabilitySelect={availability ? (crewId, selected) => { setSelectedAvailabilityCrewIds(current => selected ? [...new Set([...current, crewId])] : current.filter(id => id !== crewId)); setAvailabilityPanelOpen(true); } : undefined} />;
   }
@@ -7368,6 +7369,7 @@ function EventsClientInner({
               {selectedShowHasPartialCoordinatorAccess ? <div className="small muted" style={{ marginTop: 4 }}>Booking View shows staffing status only inside your assigned scope. Use Booth View for the full event details you are allowed to see.</div> : null}
             </div>
             <div className="toolbar">
+              {canManageCallNext ? <button type="button" className="primary" disabled={saving || callNextBusy} onClick={() => setCallNextAddRequest(current => current + 1)}>Add to Call Next</button> : null}
               <button type="button" className="primary" onClick={() => setEventDisplayMode("booth")}>Back to Booth View</button>
               <button type="button" className="ghost" onClick={scrollToNextOpenShift} disabled={bookingSummary.openCount <= bookingSummary.holdCount}>Next Open Shift</button>
               <button type="button" className="ghost" disabled={!selectedShow} onClick={() => void refreshSelectedEventData(selectedShow?.id || null, { minAgeMs: 0, silent: false })}>Refresh staffing</button>
