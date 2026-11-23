@@ -1,4 +1,4 @@
-import { CONTRACT_CONDUCT_TERMS, CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
+import { CONTRACT_PREMIUM_TERMS, CONTRACT_CONDUCT_TERMS, CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
 import { advancePurchaseOrderReview } from "@/lib/purchase-order-review";
 import { phoneForMessaging, phoneDigitsForMatch } from "@/lib/crew-types";
 import { NextResponse } from "next/server";
@@ -705,6 +705,8 @@ function buildSignedContractPdf(
   paragraph("Contractor shall provide temporary labor or staffing services on a per-job basis. Contractor retains full control over how services are performed, subject to Company's right to inspect work and ensure compliance with client requirements and industry standards.");
   heading("2. Payment");
   CONTRACT_PAYMENT_TERMS.forEach(term => { if (term.heading) heading(term.heading); paragraph(term.text); });
+  heading("2A. Overtime, Double Time, Overnight Work & Holidays");
+  CONTRACT_PREMIUM_TERMS.forEach(term => paragraph(term));
   heading("3. Term & Termination");
   paragraph("This Agreement shall commence on the Effective Date and shall continue until terminated by either Party. Either Party may terminate this Agreement with five (5) days' prior written notice, except in cases of immediate termination due to breach, safety violations, or conflicts of interest. This Agreement terminates immediately upon the death of the Contractor.");
   heading("4. Instrumentalities/Tools/Supplies");

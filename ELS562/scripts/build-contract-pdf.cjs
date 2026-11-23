@@ -17,6 +17,7 @@ function load(file){const exports={};vm.runInNewContext(transpile(fs.readFileSyn
   if(name==='heading'){
    if(arg.text.startsWith('APPENDIX A'))break;
    current={heading:arg.text,paragraphs:[]};sections.push(current);
+   if(arg.text.startsWith('2A.'))current.paragraphs=[...terms.CONTRACT_PREMIUM_TERMS];
    if(arg.text==='2. Payment')current.paragraphs=terms.CONTRACT_PAYMENT_TERMS.flatMap(term=>[...(term.heading?[term.heading+'.']:[]),term.text]);
   }else if(name==='paragraph')current.paragraphs.push(arg.text);
  }

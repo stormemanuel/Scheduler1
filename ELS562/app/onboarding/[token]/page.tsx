@@ -1,6 +1,6 @@
 "use client";
 
-import { CONTRACT_CONDUCT_TERMS, CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
+import { CONTRACT_PREMIUM_TERMS, CONTRACT_CONDUCT_TERMS, CONTRACT_CERTIFICATIONS, CONTRACT_PAYMENT_TERMS, CONTRACT_PAYMENT_TERMS_VERSION } from "@/lib/contract-terms";
 import { use, useCallback, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 
 type PageProps = {
@@ -1094,6 +1094,8 @@ function ContractAgreementSection({
         <p>Contractor shall provide temporary labor or staffing services on a per-job basis. Contractor retains full control over how services are performed, subject to Company’s right to inspect work and ensure compliance with client requirements and industry standards.</p>
         <h4>2. Payment</h4>
         {CONTRACT_PAYMENT_TERMS.map((term, index) => <div key={index}>{term.heading ? <p><strong>{term.heading}.</strong></p> : null}<p>{term.text}</p></div>)}
+        <h4>2A. Overtime, Double Time, Overnight Work & Holidays</h4>
+        {CONTRACT_PREMIUM_TERMS.map((term, index) => <p key={index}>{term}</p>)}
         <h4>3. Term & Termination</h4>
         <p>This Agreement shall commence on the Effective Date and shall continue until terminated by either Party. Either Party may terminate this Agreement with five (5) days’ prior written notice, except in cases of immediate termination due to breach, safety violations, or conflicts of interest. This Agreement terminates immediately upon the death of the Contractor.</p>
         <h4>4. Instrumentalities/Tools/Supplies</h4>
